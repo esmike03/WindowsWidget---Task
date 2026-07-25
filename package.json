@@ -1,0 +1,49 @@
+{
+  "name": "sidenote",
+  "productName": "Sidenote",
+  "version": "1.0.0",
+  "description": "A minimal edge-docked Windows widget for notes, tasks and scheduling.",
+  "main": "src/main/main.js",
+  "type": "commonjs",
+  "author": "Sidenote",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "icon": "node tools/make-icon.js",
+    "pack": "electron-builder --win --dir",
+    "dist": "npm run icon && electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.sidenote.widget",
+    "productName": "Sidenote",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Sidenote"
+    }
+  }
+}
