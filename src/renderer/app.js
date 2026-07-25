@@ -44,6 +44,7 @@ const el = {
   aiBody: $('#aiBody'),
   aiState: $('#aiState'),
   aiStateText: $('#aiStateText'),
+  aiNote: $('#aiNote'),
 };
 
 let data = { version: 1, items: [] };
@@ -913,6 +914,22 @@ function ensureAiView(key) {
     if (aiTab === key) showAiState(`Couldn't reach ${site.label}. Check your connection.`, true);
   });
 
+  // Google refuses OAuth in embedded browsers, so say so the moment we land
+  // there rather than letting the user hit an opaque "browser may not be
+  // secure" wall.
+  const checkGoogle = () => {
+    if (aiTab !== key) return;
+    let host = '';
+    try {
+      host = new URL(view.getURL()).hostname;
+    } catch (_) {
+      return;
+    }
+    if (host.endsWith('accounts.google.com')) el.aiNote.hidden = false;
+  };
+  view.addEventListener('did-navigate', checkGoogle);
+  view.addEventListener('did-navigate-in-page', checkGoogle);
+
   el.aiBody.appendChild(view);
   aiViews.set(key, view);
   return view;
@@ -925,6 +942,7 @@ function setAiTab(key) {
   $$('button', el.aiSeg).forEach((b) => b.classList.toggle('is-on', b.dataset.ai === key));
 
   hideAiState();
+  el.aiNote.hidden = true;
   const view = ensureAiView(key);
   aiViews.forEach((v, k) => {
     v.hidden = k !== key;
@@ -960,10 +978,13 @@ el.ai.addEventListener('click', (e) => {
 
   const act = e.target.closest('[data-act]')?.dataset.act;
   if (act === 'aiClose') closeAiPane();
+  if (act === 'aiNoteClose') el.aiNote.hidden = true;
+  if (act === 'aiPopout') api.ai.popOut(aiTab);
   if (act === 'aiReload') {
     const view = aiViews.get(aiTab);
     if (view) {
       hideAiState();
+      el.aiNote.hidden = true;
       view.reload();
     }
   }

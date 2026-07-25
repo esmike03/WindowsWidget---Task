@@ -1352,6 +1352,54 @@ html[data-theme='dark'] .ai-body {
   display: none;
 }
 
+.ai-note {
+  position: absolute;
+  z-index: 3;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 7px 7px 10px;
+  border-radius: 9px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--txt);
+  background: var(--glass);
+  box-shadow: 0 8px 22px -10px rgba(16, 20, 40, 0.5), inset 0 0 0 1px var(--stroke);
+  animation: toastIn 0.24s var(--ease);
+}
+.ai-note span {
+  flex: 1;
+  line-height: 1.35;
+}
+.ai-note-cta {
+  flex: none;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 7px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, var(--a1), var(--a2));
+}
+.ai-note-x {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  color: var(--txt-3);
+}
+.ai-note-x:hover {
+  background: var(--surface-2);
+  color: var(--txt);
+}
+.ai-note-x svg {
+  width: 11px;
+  height: 11px;
+}
+
 .ai-state {
   position: absolute;
   inset: 0;

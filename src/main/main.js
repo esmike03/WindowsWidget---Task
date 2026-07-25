@@ -16,6 +16,7 @@ const {
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { spawn } = require('child_process');
 
 const { Store } = require('./store');
 const { Dock, COLLAPSED_W, COLLAPSED_H } = require('./dock');
@@ -214,6 +215,43 @@ function handleAiPopups(contents) {
       },
     };
   });
+}
+
+/**
+ * Google refuses OAuth inside embedded browser frameworks, so the pane can't
+ * complete a "Sign in with Google" flow. Popping the site out into a real
+ * Chrome/Edge app window sidesteps it entirely: it's a genuine browser, it
+ * uses the user's normal profile (so they're usually already signed in), and
+ * `--app=` means it still has no address bar or tab strip.
+ */
+function appModeBrowsers() {
+  const pf = process.env['ProgramFiles'] || 'C:\\Program Files';
+  const pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+  const local = process.env['LOCALAPPDATA'] || '';
+  return [
+    path.join(local, 'Google\\Chrome\\Application\\chrome.exe'),
+    path.join(pf, 'Google\\Chrome\\Application\\chrome.exe'),
+    path.join(pf86, 'Google\\Chrome\\Application\\chrome.exe'),
+    path.join(pf86, 'Microsoft\\Edge\\Application\\msedge.exe'),
+    path.join(pf, 'Microsoft\\Edge\\Application\\msedge.exe'),
+  ].filter((p) => p && fs.existsSync(p));
+}
+
+function popOutSite(key) {
+  const site = AI_SITES[key];
+  if (!site) return false;
+
+  const exe = appModeBrowsers()[0];
+  if (exe) {
+    try {
+      spawn(exe, [`--app=${site.url}`], { detached: true, stdio: 'ignore' }).unref();
+      return true;
+    } catch (err) {
+      console.error('[sidenote] app-mode launch failed', err);
+    }
+  }
+  shell.openExternal(site.url); // fall back to the default browser
+  return true;
 }
 
 function applyAlwaysOnTop() {
@@ -440,6 +478,7 @@ function registerIpc() {
   ipcMain.on('ai:tab', (_e, tab) => {
     if (AI_SITES[tab]) settingsStore.set({ aiTab: tab });
   });
+  ipcMain.handle('ai:popout', (_e, tab) => popOutSite(tab));
 
   ipcMain.on('app:quit', () => quit());
 

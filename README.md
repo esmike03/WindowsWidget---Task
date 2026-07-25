@@ -59,6 +59,25 @@ snaps back when you close it (`Esc` or the ✕).
 - Auto-collapse is suppressed while the pane is open, so a sign-in popup taking focus
   can't hide the panel mid-login.
 
+#### Signing in
+
+**"Sign in with Google" does not work inside the pane** — Google deliberately blocks
+OAuth in embedded browser frameworks (an embedding app could read your keystrokes and
+cookies), and returns *"This browser or app may not be secure."* That is a security
+control, not a bug, and it is not something the app should try to defeat.
+
+Two things that do work:
+
+1. **Sign in with an email address instead.** ChatGPT (email + password) and Claude
+   (email + a one-time code) both work in the pane, and the session persists.
+2. **Use the ⧉ button** in the pane header. It opens the current site in a real
+   Chrome or Edge window using `--app=`, which has no address bar and no tab strip —
+   and since it's your normal browser profile, you are usually already signed in.
+   Falls back to your default browser if neither is installed.
+
+The pane shows a banner offering that button the moment it lands on a Google
+sign-in page, so the dead end is not silent.
+
 ### Quick add
 
 The composer parses dates out of what you type, so you rarely need the picker:
