@@ -1,7 +1,7 @@
 {
   "name": "sidenote",
   "productName": "Sidenote",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A minimal edge-docked Windows widget for notes, tasks and scheduling.",
   "main": "src/main/main.js",
   "type": "commonjs",
