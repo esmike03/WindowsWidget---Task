@@ -6,6 +6,8 @@ const { screen } = require('electron');
 // (and top/bottom) so the CSS drop shadow has somewhere to render — the panel
 // itself always sits flush against the screen edge.
 const PANEL_W = 344;
+// The AI view hosts a real chat site, which is unusable at note-panel width.
+const PANEL_AI_W = 480;
 const PANEL_H = 620;
 const PANEL_MIN_H = 320;
 const TAB_W = 30;
@@ -36,16 +38,23 @@ function panelHeightFor(display) {
   return Math.round(clamp(PANEL_H, PANEL_MIN_H, Math.max(PANEL_MIN_H, usable)));
 }
 
+/** Panel width for the current mode, never wider than the display allows. */
+function panelWidthFor(display, aiOpen) {
+  if (!aiOpen) return PANEL_W;
+  const usable = display.workArea.width - GUTTER - 40;
+  return Math.round(clamp(PANEL_AI_W, PANEL_W, Math.max(PANEL_W, usable)));
+}
+
 /**
  * Window rect for a given state. Expanded and collapsed rects share the same
  * outer edge and the same vertical centre, so a straight lerp between them
  * reads as the panel sliding into / out of the edge tab.
  */
-function boundsFor(display, { edge, anchor, collapsed }) {
+function boundsFor(display, { edge, anchor, collapsed, aiOpen }) {
   const wa = display.workArea;
   const panelH = panelHeightFor(display);
 
-  const width = collapsed ? COLLAPSED_W : PANEL_W + GUTTER;
+  const width = collapsed ? COLLAPSED_W : panelWidthFor(display, aiOpen) + GUTTER;
   const height = collapsed ? COLLAPSED_H : panelH + GUTTER * 2;
 
   const x = edge === 'left' ? wa.x : wa.x + wa.width - width;
@@ -66,7 +75,7 @@ class Dock {
 
   get state() {
     const s = this.settings.get();
-    return { edge: s.edge, anchor: s.anchor, collapsed: s.collapsed };
+    return { edge: s.edge, anchor: s.anchor, collapsed: s.collapsed, aiOpen: s.aiOpen };
   }
 
   display() {
@@ -79,7 +88,8 @@ class Dock {
     return {
       edge: s.edge,
       collapsed: s.collapsed,
-      panelW: PANEL_W,
+      aiOpen: !!s.aiOpen,
+      panelW: panelWidthFor(this.display(), s.aiOpen),
       panelH: panelHeightFor(this.display()),
       tabW: TAB_W,
       tabH: TAB_H,
@@ -112,6 +122,13 @@ class Dock {
 
   toggle() {
     this.setCollapsed(!this.settings.get().collapsed);
+  }
+
+  /** Widen (or restore) the panel for the embedded AI browser. */
+  setAiOpen(aiOpen) {
+    if (!!this.settings.get().aiOpen === !!aiOpen) return;
+    this.settings.set({ aiOpen: !!aiOpen });
+    this.layout({ animate: true });
   }
 
   setEdge(edge) {
@@ -211,4 +228,15 @@ class Dock {
   }
 }
 
-module.exports = { Dock, PANEL_W, PANEL_H, TAB_W, TAB_H, GUTTER, COLLAPSED_W, COLLAPSED_H, ANIM_MS };
+module.exports = {
+  Dock,
+  PANEL_W,
+  PANEL_AI_W,
+  PANEL_H,
+  TAB_W,
+  TAB_H,
+  GUTTER,
+  COLLAPSED_W,
+  COLLAPSED_H,
+  ANIM_MS,
+};

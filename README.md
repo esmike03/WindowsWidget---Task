@@ -44,6 +44,21 @@ circle again during the strike-through also undoes it.
 
 **Reminders** — a desktop notification fires when an event's time arrives.
 
+**AI pane** — the ✦ button in the header (left of the monitor button) swaps the list
+for an embedded browser with **ChatGPT** and **Claude** tabs. No address bar, no
+search bar — just the site. The panel widens from 344px to 480px while it's open and
+snaps back when you close it (`Esc` or the ✕).
+
+- Both tabs share one persistent session, so you sign in once and stay signed in.
+- Sign-in popups (Google, Apple, magic links) open in a normal window on that same
+  session, so OAuth works.
+- Tabs load lazily — nothing is fetched until you first open the pane, and neither
+  site loads at login.
+- The pane is restricted to those two origins; a webview can't be attached with any
+  other partition or start URL.
+- Auto-collapse is suppressed while the pane is open, so a sign-in popup taking focus
+  can't hide the panel mid-login.
+
 ### Quick add
 
 The composer parses dates out of what you type, so you rarely need the picker:
@@ -87,7 +102,7 @@ Use the calendar button for an explicit date/time, or to clear one.
 | `Ctrl+1` / `Ctrl+2` | Schedule / Notes |
 | `/` | Jump to the composer |
 | `Enter` | Add, or commit a rename |
-| `Esc` | Close popover → close sheet → collapse |
+| `Esc` | Close popover → close sheet → close AI pane → collapse |
 | Double-click an item | Rename it |
 
 ---

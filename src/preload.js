@@ -31,6 +31,11 @@ contextBridge.exposeInMainWorld('sidenote', {
   theme: {
     onChange: (fn) => on('theme:changed', fn),
   },
+  ai: {
+    sites: () => ipcRenderer.invoke('ai:sites'),
+    setOpen: (open) => ipcRenderer.send('ai:open', open),
+    setTab: (tab) => ipcRenderer.send('ai:tab', tab),
+  },
   notify: (payload) => ipcRenderer.send('notify', payload),
   quit: () => ipcRenderer.send('app:quit'),
 });

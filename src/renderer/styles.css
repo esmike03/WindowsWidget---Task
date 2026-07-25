@@ -309,7 +309,9 @@ html.edge-left .tab-label {
   border: 1px solid var(--stroke);
   box-shadow: var(--shadow);
   opacity: 1;
-  transition: opacity 0.2s ease 0.07s;
+  /* width animates in step with the main-process window resize when the AI
+     pane widens the panel */
+  transition: opacity 0.2s ease 0.07s, width 0.26s var(--ease);
 }
 
 html.edge-right #panel {
@@ -1248,6 +1250,155 @@ html[data-theme='dark'] .pick button.is-on {
   font-size: var(--fs-nano);
   font-weight: 600;
   color: var(--txt-3);
+}
+
+/* ═══ embedded AI browser ════════════════════════════════════════════ */
+
+/* The AI pane replaces the list inside the panel column rather than covering
+   it, so the header — drag grip, collapse, theme, the AI toggle — stays live. */
+.ai {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  animation: aiIn 0.24s var(--ease);
+}
+@keyframes aiIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+html.ai-mode #seg,
+html.ai-mode #scroller,
+html.ai-mode #composer {
+  display: none;
+}
+
+.ai-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 12px 8px;
+}
+
+.ai-seg {
+  position: relative;
+  flex: 1;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+}
+.ai-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  height: calc(100% - 6px);
+  border-radius: calc(var(--r-pill) - 3px);
+  background: var(--surface-h);
+  box-shadow: 0 1px 2px rgba(16, 20, 38, 0.08), inset 0 0 0 1px var(--stroke);
+  transition: transform 0.3s var(--ease);
+}
+html[data-theme='dark'] .ai-thumb {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
+  box-shadow: inset 0 0 0 1px var(--stroke-hi);
+}
+.ai-seg[data-on='claude'] .ai-thumb {
+  transform: translateX(100%);
+}
+.ai-seg button {
+  position: relative;
+  flex: 1;
+  height: 24px;
+  border-radius: calc(var(--r-pill) - 3px);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--txt-3);
+  transition: color 0.2s;
+}
+.ai-seg button.is-on {
+  color: var(--txt);
+}
+
+.ai-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 0 12px 12px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px var(--stroke);
+}
+html[data-theme='dark'] .ai-body {
+  background: #1a1c24;
+}
+
+.ai-body webview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: flex;
+}
+.ai-body webview[hidden] {
+  display: none;
+}
+
+.ai-state {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px;
+  text-align: center;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--txt-3);
+  background: inherit;
+}
+.ai-state p {
+  max-width: 260px;
+  line-height: 1.5;
+}
+.ai-state .btn {
+  display: none;
+}
+.ai-state.is-error .spin {
+  display: none;
+}
+.ai-state.is-error .btn {
+  display: inline-flex;
+}
+
+.spin {
+  width: 18px;
+  height: 18px;
+  border-radius: 99px;
+  border: 2px solid var(--surface-2);
+  border-top-color: var(--a1);
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ico-ai.is-on {
+  color: color-mix(in srgb, var(--a1) 90%, var(--txt));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--a1) 18%, transparent), color-mix(in srgb, var(--a2) 12%, transparent));
 }
 
 /* ── toast ───────────────────────────────────────────────────────────── */

@@ -39,6 +39,11 @@ const el = {
   toast: $('#toast'),
   toastText: $('#toastText'),
   toastUndo: $('#toastUndo'),
+  ai: $('#ai'),
+  aiSeg: $('#aiSeg'),
+  aiBody: $('#aiBody'),
+  aiState: $('#aiState'),
+  aiStateText: $('#aiStateText'),
 };
 
 let data = { version: 1, items: [] };
@@ -867,12 +872,110 @@ function cycleTheme() {
   applySettings({ theme: next });
 }
 
+/* ── embedded AI browser ─────────────────────────────────────────────── */
+
+const AI_PARTITION = 'persist:sidenote-ai';
+const aiViews = new Map(); // key -> <webview>
+let aiSites = {};
+let aiTab = 'chatgpt';
+
+const aiOpen = () => !el.ai.hidden;
+
+function showAiState(text, isError = false) {
+  el.aiStateText.textContent = text;
+  el.aiState.classList.toggle('is-error', isError);
+  el.aiState.hidden = false;
+}
+const hideAiState = () => {
+  el.aiState.hidden = true;
+};
+
+/** Webviews are created on first use so no chat site loads at startup. */
+function ensureAiView(key) {
+  if (aiViews.has(key)) return aiViews.get(key);
+  const site = aiSites[key];
+  if (!site) return null;
+
+  const view = document.createElement('webview');
+  view.setAttribute('partition', AI_PARTITION);
+  view.setAttribute('allowpopups', ''); // sign-in flows open popups
+  view.setAttribute('src', site.url);
+  view.hidden = true;
+
+  view.addEventListener('did-start-loading', () => {
+    if (aiTab === key) showAiState(`Loading ${site.label}…`);
+  });
+  view.addEventListener('did-stop-loading', () => {
+    if (aiTab === key) hideAiState();
+  });
+  view.addEventListener('did-fail-load', (e) => {
+    if (e.errorCode === -3) return; // aborted — almost always a redirect
+    if (aiTab === key) showAiState(`Couldn't reach ${site.label}. Check your connection.`, true);
+  });
+
+  el.aiBody.appendChild(view);
+  aiViews.set(key, view);
+  return view;
+}
+
+function setAiTab(key) {
+  if (!aiSites[key]) return;
+  aiTab = key;
+  el.aiSeg.dataset.on = key;
+  $$('button', el.aiSeg).forEach((b) => b.classList.toggle('is-on', b.dataset.ai === key));
+
+  hideAiState();
+  const view = ensureAiView(key);
+  aiViews.forEach((v, k) => {
+    v.hidden = k !== key;
+  });
+  if (view && typeof view.isLoading === 'function' && view.isLoading()) {
+    showAiState(`Loading ${aiSites[key].label}…`);
+  }
+  api.ai.setTab(key);
+}
+
+function openAiPane() {
+  if (!el.pop.hidden) closeWhen();
+  if (!el.sheet.hidden) closeSheet();
+  el.ai.hidden = false;
+  el.html.classList.add('ai-mode');
+  $('[data-act="ai"]').classList.add('is-on');
+  setAiTab(aiTab);
+  api.ai.setOpen(true);
+}
+
+function closeAiPane() {
+  el.ai.hidden = true;
+  el.html.classList.remove('ai-mode');
+  $('[data-act="ai"]').classList.remove('is-on');
+  api.ai.setOpen(false);
+}
+
+const toggleAiPane = () => (aiOpen() ? closeAiPane() : openAiPane());
+
+el.ai.addEventListener('click', (e) => {
+  const tab = e.target.closest('[data-ai]');
+  if (tab) return setAiTab(tab.dataset.ai);
+
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (act === 'aiClose') closeAiPane();
+  if (act === 'aiReload') {
+    const view = aiViews.get(aiTab);
+    if (view) {
+      hideAiState();
+      view.reload();
+    }
+  }
+});
+
 /* ── header actions ──────────────────────────────────────────────────── */
 
 $('.head-actions').addEventListener('click', (e) => {
   const act = e.target.closest('[data-act]')?.dataset.act;
   if (act === 'collapse') api.dock.collapse();
   else if (act === 'theme') cycleTheme();
+  else if (act === 'ai') toggleAiPane();
   else if (act === 'menu') (el.sheet.hidden ? openSheet('archive') : closeSheet());
   else if (act === 'screen') api.dock.cycleDisplay();
 });
@@ -896,7 +999,7 @@ function applyDock(m) {
   }
   // Focus the composer only when the panel actually opens — a re-layout from a
   // monitor being plugged in shouldn't steal the caret.
-  if (wasCollapsed && !m.collapsed) setTimeout(() => el.input.focus(), 120);
+  if (wasCollapsed && !m.collapsed && el.ai.hidden) setTimeout(() => el.input.focus(), 120);
   wasCollapsed = m.collapsed;
 }
 
@@ -947,6 +1050,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (!el.pop.hidden) return closeWhen();
     if (!el.sheet.hidden) return closeSheet();
+    if (aiOpen()) return closeAiPane();
     if (editingId) return;
     return api.dock.collapse();
   }
@@ -1003,11 +1107,15 @@ setInterval(() => {
 /* ── boot ────────────────────────────────────────────────────────────── */
 
 (async function boot() {
-  const [loaded, s, metrics] = await Promise.all([
+  const [loaded, s, metrics, sites] = await Promise.all([
     api.data.load(),
     api.settings.get(),
     api.dock.metrics(),
+    api.ai.sites(),
   ]);
+
+  aiSites = sites || {};
+  if (aiSites[s.aiTab]) aiTab = s.aiTab;
 
   data = loaded && Array.isArray(loaded.items) ? loaded : { version: 1, items: [] };
   // Legacy shape from an earlier build.

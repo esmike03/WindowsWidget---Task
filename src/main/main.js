@@ -11,6 +11,7 @@ const {
   Menu,
   Notification,
   nativeImage,
+  session,
   shell,
 } = require('electron');
 const path = require('path');
@@ -35,7 +36,16 @@ const DEFAULT_SETTINGS = {
   reminders: true,
   startWithWindows: true, // the widget is meant to be there when you log in
   view: 'schedule', // schedule | notes
+  aiOpen: false,
+  aiTab: 'chatgpt', // chatgpt | claude
 };
+
+// The embedded browser is deliberately limited to these two sites.
+const AI_SITES = {
+  chatgpt: { label: 'ChatGPT', url: 'https://chatgpt.com/' },
+  claude: { label: 'Claude', url: 'https://claude.ai/new' },
+};
+const AI_PARTITION = 'persist:sidenote-ai';
 
 const DEFAULT_DATA = { version: 1, items: [] };
 
@@ -87,8 +97,11 @@ function createWindow() {
       sandbox: true,
       backgroundThrottling: false,
       spellcheck: false,
+      webviewTag: true, // the ChatGPT / Claude panes
     },
   });
+
+  hardenWebviews(win.webContents);
 
   dock = new Dock(win, settings);
 
@@ -125,9 +138,10 @@ function createWindow() {
   });
 
   win.on('blur', () => {
-    if (settings.get().autoCollapse && !settings.get().collapsed) {
-      dock.setCollapsed(true);
-    }
+    const s = settings.get();
+    // Never auto-collapse out from under the AI pane: a sign-in popup or the
+    // chat site itself taking focus would otherwise hide the panel mid-use.
+    if (s.autoCollapse && !s.collapsed && !s.aiOpen) dock.setCollapsed(true);
   });
 
   // Never let the widget navigate away or spawn browser windows in-app.
@@ -136,6 +150,70 @@ function createWindow() {
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
+}
+
+// ---------------------------------------------------------------------------
+// Embedded AI browser (ChatGPT / Claude)
+// ---------------------------------------------------------------------------
+
+/** Electron's default UA advertises Electron, which some sign-in flows reject. */
+function chromeUserAgent() {
+  const major = String(process.versions.chrome || '120').split('.')[0];
+  return (
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+    `(KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`
+  );
+}
+
+function setupAiSession() {
+  session.fromPartition(AI_PARTITION).setUserAgent(chromeUserAgent());
+}
+
+/**
+ * The AI panes are <webview>s. Lock them down at attach time and make sure a
+ * webview can never be created with anything other than our own partition.
+ */
+function hardenWebviews(hostContents) {
+  hostContents.on('will-attach-webview', (event, webPreferences, params) => {
+    delete webPreferences.preload;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.webSecurity = true;
+
+    const allowed = Object.values(AI_SITES).some((s) => {
+      try {
+        return new URL(params.src).origin === new URL(s.url).origin;
+      } catch (_) {
+        return false;
+      }
+    });
+    if (params.partition !== AI_PARTITION || !allowed) event.preventDefault();
+  });
+}
+
+/**
+ * Sign-in flows (Google, Apple, magic links) open popups. Denying them would
+ * make logging in impossible, so give them a real window on the same session.
+ */
+function handleAiPopups(contents) {
+  contents.setWindowOpenHandler(({ url }) => {
+    if (!/^https:/i.test(url)) return { action: 'deny' };
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        width: 520,
+        height: 700,
+        alwaysOnTop: true,
+        autoHideMenuBar: true,
+        webPreferences: {
+          partition: AI_PARTITION,
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      },
+    };
+  });
 }
 
 function applyAlwaysOnTop() {
@@ -357,6 +435,12 @@ function registerIpc() {
   ipcMain.on('dock:dragStart', () => dock.beginDrag());
   ipcMain.on('dock:dragEnd', () => dock.endDrag(true));
 
+  ipcMain.handle('ai:sites', () => AI_SITES);
+  ipcMain.on('ai:open', (_e, open) => dock.setAiOpen(!!open));
+  ipcMain.on('ai:tab', (_e, tab) => {
+    if (AI_SITES[tab]) settingsStore.set({ aiTab: tab });
+  });
+
   ipcMain.on('app:quit', () => quit());
 
   ipcMain.on('notify', (_e, payload) => {
@@ -404,6 +488,13 @@ if (!gotLock) {
     if (!settingsStore.get().displayId) {
       settingsStore.set({ displayId: String(screen.getPrimaryDisplay().id) });
     }
+    // Always start on the notes panel; don't load a chat site at login.
+    settingsStore.set({ aiOpen: false });
+
+    setupAiSession();
+    app.on('web-contents-created', (_e, contents) => {
+      if (contents.getType() === 'webview') handleAiPopups(contents);
+    });
 
     registerIpc();
     createWindow();
