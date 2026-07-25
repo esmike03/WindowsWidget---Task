@@ -980,6 +980,16 @@ el.ai.addEventListener('click', (e) => {
   if (act === 'aiClose') closeAiPane();
   if (act === 'aiNoteClose') el.aiNote.hidden = true;
   if (act === 'aiPopout') api.ai.popOut(aiTab);
+  if (act === 'aiBack') {
+    // Get off Google's rejection page and back to the site's own sign-in form,
+    // where an email address can be used instead.
+    const view = aiViews.get(aiTab);
+    if (view) {
+      el.aiNote.hidden = true;
+      if (typeof view.canGoBack === 'function' && view.canGoBack()) view.goBack();
+      else view.loadURL(aiSites[aiTab].url);
+    }
+  }
   if (act === 'aiReload') {
     const view = aiViews.get(aiTab);
     if (view) {

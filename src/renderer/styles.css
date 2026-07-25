@@ -1359,10 +1359,10 @@ html[data-theme='dark'] .ai-body {
   left: 8px;
   right: 8px;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 7px 7px 10px;
-  border-radius: 9px;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 9px 9px 11px;
+  border-radius: 10px;
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--txt);
@@ -1371,8 +1371,19 @@ html[data-theme='dark'] .ai-body {
   animation: toastIn 0.24s var(--ease);
 }
 .ai-note span {
-  flex: 1;
-  line-height: 1.35;
+  line-height: 1.45;
+  font-weight: 500;
+  color: var(--txt-2);
+}
+.ai-note span b {
+  font-weight: 700;
+  color: var(--txt);
+}
+.ai-note-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
 }
 .ai-note-cta {
   flex: none;

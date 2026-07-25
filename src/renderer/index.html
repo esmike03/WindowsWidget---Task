@@ -119,15 +119,17 @@
         <button class="is-on" data-ai="chatgpt">ChatGPT</button>
         <button data-ai="claude">Claude</button>
       </div>
-      <button class="ico" data-act="aiPopout" title="Open in a real browser window — needed for Google sign-in"><svg><use href="#i-popout"/></svg></button>
+      <button class="ico" data-act="aiPopout" title="Open in a real browser window (separate session — won't sign in this panel)"><svg><use href="#i-popout"/></svg></button>
       <button class="ico" data-act="aiReload" title="Reload"><svg><use href="#i-refresh"/></svg></button>
       <button class="ico" data-act="aiClose" title="Back to notes"><svg><use href="#i-x"/></svg></button>
     </header>
     <div class="ai-body" id="aiBody">
       <div class="ai-note" id="aiNote" hidden>
-        <span>Google blocks sign-in inside embedded browsers.</span>
-        <button class="ai-note-cta" data-act="aiPopout">Open in browser</button>
-        <button class="ai-note-x" data-act="aiNoteClose" title="Dismiss"><svg><use href="#i-x"/></svg></button>
+        <span><b>Google sign-in only works in a real browser</b>, and that session stays there — it won't sign you in here. Go back and use your email address instead.</span>
+        <div class="ai-note-row">
+          <button class="ai-note-cta" data-act="aiBack">Back to sign-in</button>
+          <button class="ai-note-x" data-act="aiNoteClose" title="Dismiss"><svg><use href="#i-x"/></svg></button>
+        </div>
       </div>
       <div class="ai-state" id="aiState" hidden>
         <span class="spin" aria-hidden="true"></span>
