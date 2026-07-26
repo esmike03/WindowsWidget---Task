@@ -20,6 +20,8 @@ const { spawn } = require('child_process');
 
 const { Store } = require('./store');
 const { Dock, COLLAPSED_W, COLLAPSED_H } = require('./dock');
+const { Ask } = require('./ask');
+const { resolveTools, resolveToolUrl, toolOrigins, isHttpUrl } = require('./tools');
 
 const ROOT = path.join(__dirname, '..', '..');
 const ASSETS = path.join(ROOT, 'assets');
@@ -32,27 +34,80 @@ const DEFAULT_SETTINGS = {
   displayId: null,
   theme: 'system', // system | light | dark
   onComplete: 'archive', // archive | delete
-  autoCollapse: false,
+  autoCollapse: true, // tuck back to the edge as soon as focus leaves
   alwaysOnTop: true,
   reminders: true,
   startWithWindows: true, // the widget is meant to be there when you log in
   view: 'schedule', // schedule | notes
   aiOpen: false,
-  aiTab: 'chatgpt', // chatgpt | claude
+  aiTab: 'chatgpt', // chatgpt | claude | custom | mail
+  paneCustom: { label: 'Gmail', url: 'https://mail.google.com/mail/u/0/' },
+  paneMail: 'outlook', // id from MAIL_PROVIDERS
+  askTarget: 'chatgpt', // which site the floating Ask bar drives
+  askBounds: null, // remembered position of the Ask bar
+  toolUrls: {}, // per-tool URL overrides, keyed by tool id
 };
 
-// The embedded browser is deliberately limited to these two sites.
-const AI_SITES = {
+// The two chat tabs are fixed; the remaining two are user-configurable slots.
+// The `ai*` naming here (and in the IPC channels and settings keys) predates
+// them and is kept so existing settings.json files and sessions keep working.
+const AI_FIXED = {
   chatgpt: { label: 'ChatGPT', url: 'https://chatgpt.com/' },
   claude: { label: 'Claude', url: 'https://claude.ai/new' },
 };
+
+// Offered in the mail slot's picker. Any of these can also be typed into the
+// custom slot by hand.
+const MAIL_PROVIDERS = [
+  { id: 'outlook', label: 'Outlook', url: 'https://outlook.live.com/mail/0/' },
+  { id: 'gmail', label: 'Gmail', url: 'https://mail.google.com/mail/u/0/' },
+  { id: 'yahoo', label: 'Yahoo Mail', url: 'https://mail.yahoo.com/' },
+  { id: 'proton', label: 'Proton Mail', url: 'https://mail.proton.me/u/0/' },
+  { id: 'icloud', label: 'iCloud Mail', url: 'https://www.icloud.com/mail/' },
+  { id: 'zoho', label: 'Zoho Mail', url: 'https://mail.zoho.com/zm/' },
+  { id: 'fastmail', label: 'Fastmail', url: 'https://app.fastmail.com/mail/' },
+  { id: 'gmx', label: 'GMX', url: 'https://www.gmx.com/' },
+  { id: 'aol', label: 'AOL Mail', url: 'https://mail.aol.com/' },
+];
+
+const DEFAULT_CUSTOM_SLOT = { label: 'Gmail', url: 'https://mail.google.com/mail/u/0/' };
+
+/** The four pane tabs with both configurable slots resolved. */
+function paneSites() {
+  const s = settings.get();
+
+  const custom = s.paneCustom && isHttpUrl(s.paneCustom.url) ? s.paneCustom : DEFAULT_CUSTOM_SLOT;
+  const provider =
+    MAIL_PROVIDERS.find((p) => p.id === s.paneMail) || MAIL_PROVIDERS[0];
+
+  return {
+    ...AI_FIXED,
+    custom: { label: String(custom.label || 'Custom').slice(0, 18), url: custom.url },
+    mail: { label: provider.label, url: provider.url },
+  };
+}
+
+/** Origins any pane webview may attach to: fixed sites, both slots, all tools. */
+function paneOrigins() {
+  const out = toolOrigins(settings.get().toolUrls);
+  for (const site of Object.values(paneSites())) {
+    try {
+      out.add(new URL(site.url).origin);
+    } catch (_) {
+      /* skip */
+    }
+  }
+  return out;
+}
+// Changing this string would orphan every session the user has already signed in.
 const AI_PARTITION = 'persist:sidenote-ai';
 
-const DEFAULT_DATA = { version: 1, items: [] };
+const DEFAULT_DATA = { version: 1, items: [], links: [] };
 
 let win = null;
 let tray = null;
 let dock = null;
+let ask = null;
 let settingsStore = null;
 let dataStore = null;
 let quitting = false;
@@ -181,13 +236,16 @@ function hardenWebviews(hostContents) {
     webPreferences.contextIsolation = true;
     webPreferences.webSecurity = true;
 
-    const allowed = Object.values(AI_SITES).some((s) => {
-      try {
-        return new URL(params.src).origin === new URL(s.url).origin;
-      } catch (_) {
-        return false;
-      }
-    });
+    // Allowed origins are the four fixed sites plus wherever the tool
+    // launcher currently points — the user configures those, so they are
+    // resolved fresh on every attach rather than captured at startup.
+    let origin = null;
+    try {
+      origin = new URL(params.src).origin;
+    } catch (_) {
+      origin = null;
+    }
+    const allowed = !!origin && paneOrigins().has(origin);
     if (params.partition !== AI_PARTITION || !allowed) event.preventDefault();
   });
 }
@@ -238,7 +296,7 @@ function appModeBrowsers() {
 }
 
 function popOutSite(key) {
-  const site = AI_SITES[key];
+  const site = paneSites()[key];
   if (!site) return false;
 
   const exe = appModeBrowsers()[0];
@@ -274,12 +332,12 @@ function expandAndFocus() {
 function pushTheme() {
   const source = settings.get().theme || 'system';
   nativeTheme.themeSource = source;
-  if (win && !win.isDestroyed()) {
-    win.webContents.send('theme:changed', {
-      source,
-      resolved: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
-    });
-  }
+  const payload = {
+    source,
+    resolved: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+  };
+  if (win && !win.isDestroyed()) win.webContents.send('theme:changed', payload);
+  if (ask && ask.win && !ask.win.isDestroyed()) ask.win.webContents.send('theme:changed', payload);
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +405,10 @@ function refreshTrayMenu() {
         click: () => (s.collapsed ? expandAndFocus() : dock.setCollapsed(true)),
       },
       {
+        label: 'Ask about this screen…\tAlt+Shift+A',
+        click: () => ask.show(),
+      },
+      {
         label: 'Move to next screen',
         enabled: screen.getAllDisplays().length > 1,
         click: () => {
@@ -406,9 +468,18 @@ function refreshTrayMenu() {
 function registerShortcuts() {
   const bind = (accel, fn) => {
     try {
-      globalShortcut.register(accel, fn);
+      globalShortcut.register(accel, () => {
+        try {
+          fn();
+        } catch (err) {
+          console.error(`[sidenote] shortcut ${accel} failed`, err);
+        }
+      });
     } catch (_) {
       /* accelerator taken by another app — not fatal */
+    }
+    if (process.env.SIDENOTE_DEBUG) {
+      console.log(`[sidenote] shortcut ${accel}: ${globalShortcut.isRegistered(accel) ? 'ok' : 'TAKEN'}`);
     }
   };
   bind('Alt+Shift+N', () => (settings.get().collapsed ? expandAndFocus() : dock.setCollapsed(true)));
@@ -416,6 +487,7 @@ function registerShortcuts() {
     dock.cycleDisplay();
     refreshTrayMenu();
   });
+  bind('Alt+Shift+A', () => ask.toggle());
 }
 
 function watchDisplays() {
@@ -473,10 +545,58 @@ function registerIpc() {
   ipcMain.on('dock:dragStart', () => dock.beginDrag());
   ipcMain.on('dock:dragEnd', () => dock.endDrag(true));
 
-  ipcMain.handle('ai:sites', () => AI_SITES);
+  // Saved links open in the user's real browser, never inside the widget.
+  ipcMain.handle('link:open', (_e, url) => {
+    try {
+      const u = new URL(String(url));
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+      shell.openExternal(u.href);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  });
+
+  ipcMain.handle('tools:list', () => resolveTools(settings.get().toolUrls));
+
+  /** An empty or invalid URL clears the override and restores the default. */
+  ipcMain.handle('tools:setUrl', (_e, id, url) => {
+    const next = { ...(settings.get().toolUrls || {}) };
+    const clean = String(url || '').trim();
+    if (!clean) delete next[id];
+    else if (isHttpUrl(clean)) next[id] = clean;
+    else if (isHttpUrl(`https://${clean}`)) next[id] = `https://${clean}`;
+    else return { ok: false, error: 'That is not a valid web address.' };
+
+    settingsStore.set({ toolUrls: next });
+    return { ok: true, tools: resolveTools(next) };
+  });
+
+  ipcMain.handle('tools:url', (_e, id) => resolveToolUrl(id, settings.get().toolUrls));
+
+  ipcMain.handle('ai:sites', () => paneSites());
+  ipcMain.handle('ai:providers', () => MAIL_PROVIDERS);
+
+  /** The free-form slot: any label, any http(s) address. */
+  ipcMain.handle('ai:setCustom', (_e, payload) => {
+    const label = String(payload?.label || '').trim().slice(0, 18);
+    let url = String(payload?.url || '').trim();
+    if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
+    if (!isHttpUrl(url)) return { ok: false, error: 'That is not a valid web address.' };
+
+    settingsStore.set({ paneCustom: { label: label || new URL(url).hostname, url } });
+    return { ok: true, sites: paneSites() };
+  });
+
+  /** The mail slot: pick one of the known providers. */
+  ipcMain.handle('ai:setMail', (_e, id) => {
+    if (!MAIL_PROVIDERS.some((p) => p.id === id)) return { ok: false, error: 'Unknown mail provider.' };
+    settingsStore.set({ paneMail: id });
+    return { ok: true, sites: paneSites() };
+  });
   ipcMain.on('ai:open', (_e, open) => dock.setAiOpen(!!open));
   ipcMain.on('ai:tab', (_e, tab) => {
-    if (AI_SITES[tab]) settingsStore.set({ aiTab: tab });
+    if (paneSites()[tab]) settingsStore.set({ aiTab: tab });
   });
   ipcMain.handle('ai:popout', (_e, tab) => popOutSite(tab));
 
@@ -503,6 +623,7 @@ function registerIpc() {
 function quit() {
   quitting = true;
   try {
+    ask?.destroy();
     dataStore?.flush();
     settingsStore?.flush();
   } catch (_) {
@@ -530,6 +651,10 @@ if (!gotLock) {
     // Always start on the notes panel; don't load a chat site at login.
     settingsStore.set({ aiOpen: false });
 
+    // 1.2 had fixed Gmail/Outlook tabs; they are configurable slots now.
+    const legacyTab = { gmail: 'custom', outlook: 'mail' }[settingsStore.get().aiTab];
+    if (legacyTab) settingsStore.set({ aiTab: legacyTab });
+
     setupAiSession();
     app.on('web-contents-created', (_e, contents) => {
       if (contents.getType() === 'webview') handleAiPopups(contents);
@@ -537,6 +662,16 @@ if (!gotLock) {
 
     registerIpc();
     createWindow();
+
+    ask = new Ask({
+      root: ROOT,
+      settings,
+      mainWindow: () => win,
+      harden: hardenWebviews,
+      sites: paneSites,
+    });
+    ask.registerIpc();
+
     buildTray();
     registerShortcuts();
     watchDisplays();

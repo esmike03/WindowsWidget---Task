@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self' data:; font-src 'self' file:; style-src 'self'; script-src 'self';" />
+<title>Sidenote Ask</title>
+<link rel="stylesheet" href="ask.css" />
+</head>
+<body>
+
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="a-send" viewBox="0 0 24 24"><path d="M4.5 12h13M12 5.5l6.5 6.5L12 18.5"/></symbol>
+    <symbol id="a-camera" viewBox="0 0 24 24"><rect x="2.5" y="6.5" width="19" height="13" rx="2.5"/><circle cx="12" cy="13" r="3.6"/><path d="M8.5 6.5l1.3-2.2h4.4l1.3 2.2"/></symbol>
+    <symbol id="a-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="a-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 5.5h-9a2.5 2.5 0 0 0-2.5 2.5v9"/></symbol>
+    <symbol id="a-chevron" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></symbol>
+    <symbol id="a-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/></symbol>
+  </defs>
+</svg>
+
+<main id="shell">
+  <!-- the bar itself: drag anywhere by the grip or the background -->
+  <div id="bar">
+    <span id="grip" title="Drag to move"><svg><use href="#a-grip"/></svg></span>
+
+    <div class="target" id="target" data-on="chatgpt">
+      <span class="target-thumb" aria-hidden="true"></span>
+      <button type="button" data-target="chatgpt" class="is-on">GPT</button>
+      <button type="button" data-target="claude">Claude</button>
+    </div>
+
+    <input id="prompt" type="text" placeholder="Ask about this screen…" spellcheck="false" maxlength="2000" />
+
+    <button class="ico ico-send" id="send" type="button" title="Capture this screen and send (Enter)">
+      <svg><use href="#a-send"/></svg>
+    </button>
+    <button class="ico" id="close" type="button" title="Hide (Esc)"><svg><use href="#a-x"/></svg></button>
+  </div>
+
+  <!-- working / answer -->
+  <section id="out" hidden>
+    <header id="outHead">
+      <span class="spin" id="spin" hidden></span>
+      <svg class="out-icon" id="outIcon" hidden><use href="#a-camera"/></svg>
+      <span id="status">Working…</span>
+      <div class="out-acts">
+        <button class="ico" id="copy" type="button" title="Copy answer" hidden><svg><use href="#a-copy"/></svg></button>
+        <button class="ico" id="clear" type="button" title="Dismiss"><svg><use href="#a-x"/></svg></button>
+      </div>
+    </header>
+    <div id="answer" class="answer"></div>
+    <button id="more" type="button" hidden><svg><use href="#a-chevron"/></svg><span>Show more</span></button>
+  </section>
+</main>
+
+<script src="ask-app.js"></script>
+</body>
+</html>

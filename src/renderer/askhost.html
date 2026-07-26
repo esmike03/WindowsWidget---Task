@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+<title>Sidenote Ask Host</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background: #fff; }
+  #host { position: absolute; inset: 0; }
+  #host webview { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: flex; }
+  #host webview[hidden] { display: none; }
+</style>
+</head>
+<body>
+<!--
+  This window is never shown to the user. It exists only to give the chat
+  webviews a real, desktop-sized viewport so the Ask bar can drive them
+  without disturbing the panel the user is actually looking at.
+-->
+<div id="host"></div>
+<script src="inject.js"></script>
+<script src="askhost.js"></script>
+</body>
+</html>

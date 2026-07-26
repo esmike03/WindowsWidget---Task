@@ -1,0 +1,424 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Sidenote — floating Ask bar
+   Shares the panel's glass language, sized for a single line of input.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: block;
+  src: url('../../assets/fonts/manrope-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  --r: 14px;
+  --fs-nano: 9.5px;
+  --fs-xs: 10.5px;
+  --fs-sm: 11.5px;
+  --fs-md: 12.5px;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --a1: #6d7cf5;
+  --a2: #a78bfa;
+  --danger: #f0616d;
+}
+
+html[data-theme='light'] {
+  --txt: #171a22;
+  --txt-2: #5c6272;
+  --txt-3: #939aab;
+  --glass: linear-gradient(158deg, rgba(255, 255, 255, 0.99) 0%, rgba(249, 250, 253, 0.975) 46%, rgba(244, 246, 251, 0.99) 100%);
+  --stroke: rgba(18, 22, 38, 0.1);
+  --stroke-hi: rgba(255, 255, 255, 0.95);
+  --surface: rgba(255, 255, 255, 0.6);
+  --surface-2: rgba(18, 22, 38, 0.045);
+  --surface-h: rgba(255, 255, 255, 0.95);
+  --shadow: 0 18px 44px -16px rgba(20, 24, 46, 0.42), 0 0 0 1px rgba(18, 22, 38, 0.06);
+  --ring: rgba(109, 124, 245, 0.35);
+}
+
+html[data-theme='dark'] {
+  --txt: #eaecf3;
+  --txt-2: #9aa1b5;
+  --txt-3: #666d81;
+  --glass: linear-gradient(158deg, rgba(33, 36, 48, 0.99) 0%, rgba(24, 26, 36, 0.975) 46%, rgba(18, 20, 28, 0.99) 100%);
+  --stroke: rgba(255, 255, 255, 0.09);
+  --stroke-hi: rgba(255, 255, 255, 0.16);
+  --surface: rgba(255, 255, 255, 0.05);
+  --surface-2: rgba(255, 255, 255, 0.04);
+  --surface-h: rgba(255, 255, 255, 0.1);
+  --shadow: 0 20px 50px -18px rgba(0, 0, 0, 0.78), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --ring: rgba(140, 155, 255, 0.45);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  font-family: 'Manrope', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  color: var(--txt);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+.sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+}
+
+input {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  outline: 0;
+  -webkit-app-region: no-drag;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+  border-radius: 6px;
+}
+#prompt:focus-visible {
+  outline: none;
+}
+
+/* ── shell ───────────────────────────────────────────────────────────── */
+
+#shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r);
+  overflow: hidden;
+  background: var(--glass);
+  backdrop-filter: blur(26px) saturate(1.7);
+  box-shadow: var(--shadow);
+}
+#shell::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--stroke-hi), transparent);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* ── bar ─────────────────────────────────────────────────────────────── */
+
+#bar {
+  flex: none;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 4px;
+  /* the whole strip is a drag handle; controls opt out via .no-drag */
+  -webkit-app-region: drag;
+}
+
+#grip {
+  flex: none;
+  width: 18px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--txt-3);
+  opacity: 0.55;
+  cursor: grab;
+}
+#grip:active {
+  cursor: grabbing;
+}
+#grip svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 0;
+  fill: currentColor;
+}
+
+.target {
+  position: relative;
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  -webkit-app-region: no-drag;
+}
+.target-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc((100% - 8px) / 2);
+  height: calc(100% - 6px);
+  border-radius: 6px;
+  background: var(--surface-h);
+  box-shadow: 0 1px 2px rgba(16, 20, 38, 0.08), inset 0 0 0 1px var(--stroke);
+  transition: transform 0.28s var(--ease);
+}
+html[data-theme='dark'] .target-thumb {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
+  box-shadow: inset 0 0 0 1px var(--stroke-hi);
+}
+.target[data-on='claude'] .target-thumb {
+  transform: translateX(calc(100% + 2px));
+}
+.target button {
+  position: relative;
+  min-width: 46px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--txt-3);
+  transition: color 0.2s;
+}
+.target button.is-on {
+  color: var(--txt);
+}
+
+#prompt {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 4px;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  user-select: text;
+  cursor: text;
+}
+#prompt::placeholder {
+  color: var(--txt-3);
+}
+
+.ico {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--txt-3);
+  transition: background 0.16s, color 0.16s, transform 0.16s var(--ease);
+}
+.ico:hover {
+  background: var(--surface-2);
+  color: var(--txt);
+}
+.ico:active {
+  transform: scale(0.92);
+}
+
+.ico-send {
+  color: #fff;
+  background: linear-gradient(135deg, var(--a1), var(--a2));
+  box-shadow: 0 3px 10px -4px color-mix(in srgb, var(--a1) 70%, transparent);
+}
+.ico-send:hover {
+  color: #fff;
+  background: linear-gradient(135deg, var(--a1), var(--a2));
+  filter: brightness(1.06);
+}
+.ico-send:disabled {
+  opacity: 0.4;
+  cursor: default;
+  filter: none;
+}
+
+/* ── output ──────────────────────────────────────────────────────────── */
+
+#out {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--stroke);
+  animation: outIn 0.22s var(--ease);
+}
+@keyframes outIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+#outHead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 8px 6px 14px;
+  font-size: var(--fs-nano);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--txt-3);
+}
+#status {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#out.is-error #status {
+  color: var(--danger);
+}
+.out-acts {
+  flex: none;
+  display: flex;
+  gap: 1px;
+}
+.out-acts .ico {
+  width: 24px;
+  height: 24px;
+}
+.out-acts svg {
+  width: 12.5px;
+  height: 12.5px;
+}
+.out-icon {
+  width: 13px;
+  height: 13px;
+  color: var(--txt-3);
+}
+
+.answer {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 14px 10px;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  line-height: 1.55;
+  color: var(--txt);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  cursor: text;
+  scrollbar-gutter: stable;
+}
+#out.is-error .answer {
+  color: var(--txt-2);
+  font-weight: 500;
+}
+
+/* Collapsed just means a shorter scroll viewport — the window height does the
+   truncating. A line-clamp here would fight `flex:1` + `overflow-y:auto` and
+   leave the text scrolled into empty space. The fade signals there is more. */
+.answer.is-clamped {
+  overflow: hidden;
+  mask-image: linear-gradient(180deg, #000 66%, transparent 100%);
+}
+
+#more {
+  flex: none;
+  height: 28px;
+  margin: 0 10px 8px;
+  border-radius: 8px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--txt-2);
+  background: var(--surface-2);
+  transition: all 0.16s;
+}
+#more:hover {
+  color: var(--txt);
+  background: var(--surface-h);
+}
+#more svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.2s var(--ease);
+}
+#more.is-open svg {
+  transform: rotate(180deg);
+}
+
+::-webkit-scrollbar {
+  width: 7px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-2);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.answer:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--txt-3) 45%, transparent);
+  background-clip: padding-box;
+}
+
+.spin {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 99px;
+  border: 2px solid var(--surface-2);
+  border-top-color: var(--a1);
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

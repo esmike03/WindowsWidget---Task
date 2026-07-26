@@ -31,8 +31,24 @@ contextBridge.exposeInMainWorld('sidenote', {
   theme: {
     onChange: (fn) => on('theme:changed', fn),
   },
+  links: {
+    open: (url) => ipcRenderer.invoke('link:open', url),
+  },
+  tools: {
+    list: () => ipcRenderer.invoke('tools:list'),
+    setUrl: (id, url) => ipcRenderer.invoke('tools:setUrl', id, url),
+    url: (id) => ipcRenderer.invoke('tools:url', id),
+  },
+  // The panel only summons the Ask bar; the automation itself runs in the
+  // offscreen host window (see askhost.js), so the panel is never disturbed.
+  ask: {
+    show: () => ipcRenderer.send('ask:show'),
+  },
   ai: {
     sites: () => ipcRenderer.invoke('ai:sites'),
+    providers: () => ipcRenderer.invoke('ai:providers'),
+    setCustom: (payload) => ipcRenderer.invoke('ai:setCustom', payload),
+    setMail: (id) => ipcRenderer.invoke('ai:setMail', id),
     setOpen: (open) => ipcRenderer.send('ai:open', open),
     setTab: (tab) => ipcRenderer.send('ai:tab', tab),
     popOut: (tab) => ipcRenderer.invoke('ai:popout', tab),

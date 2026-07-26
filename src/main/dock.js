@@ -6,8 +6,9 @@ const { screen } = require('electron');
 // (and top/bottom) so the CSS drop shadow has somewhere to render — the panel
 // itself always sits flush against the screen edge.
 const PANEL_W = 344;
-// The AI view hosts a real chat site, which is unusable at note-panel width.
-const PANEL_AI_W = 480;
+// The web pane hosts real sites (chat and webmail), unusable at note-panel width.
+// Mail clients are the denser of the two, so this is sized for them.
+const PANEL_AI_W = 520;
 const PANEL_H = 620;
 const PANEL_MIN_H = 320;
 const TAB_W = 30;

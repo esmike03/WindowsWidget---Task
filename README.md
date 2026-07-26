@@ -35,6 +35,12 @@ with a thin gradient rail on its edge.
 
 **Notes** — tasks and notes. A time is optional; anything without one lands in `Anytime`.
 
+**Links** — a bookmark shelf grouped by category. Paste or type a URL and it is saved
+under whatever category you give it; categories are just labels you invent, sorted
+alphabetically with `Unsorted` last. Clicking a row opens it in your **real browser**,
+never inside the widget. Each row gets a letter chip tinted from its hostname — a
+stand-in for a favicon, since fetching real ones would mean a network request per row.
+
 **Completing** — click the circle. The title strikes through in place, then after a
 beat the item retires to the **Archive** (or is deleted outright, if you prefer —
 Settings → *On complete*). An **Undo** toast is offered for 5 seconds. Clicking the
@@ -44,17 +50,33 @@ circle again during the strike-through also undoes it.
 
 **Reminders** — a desktop notification fires when an event's time arrives.
 
-**AI pane** — the ✦ button in the header (left of the monitor button) swaps the list
-for an embedded browser with **ChatGPT** and **Claude** tabs. No address bar, no
-search bar — just the site. The panel widens from 344px to 480px while it's open and
-snaps back when you close it (`Esc` or the ✕).
+**Web pane** — the apps button in the header (left of the monitor button) swaps the
+list for an embedded browser. No address bar, no search bar — just the site. The panel
+widens from 344px to 520px while it's open and snaps back when you close it (`Esc` or
+the ✕). Four tabs:
 
-- Both tabs share one persistent session, so you sign in once and stay signed in.
+| Tab | What it is |
+| --- | --- |
+| 1–2 | **ChatGPT** and **Claude**, fixed |
+| 3 | **Custom** — your label, your URL. Defaults to Gmail |
+| 4 | **Mail** — pick from Outlook, Gmail, Yahoo, Proton, iCloud, Zoho, Fastmail, GMX or AOL |
+
+Both configurable slots live in Settings → *Web pane tabs*. Changing one relabels the
+tab and drops the old view, so the next visit loads the new address rather than the
+previous tenant.
+
+The ✦ button in the pane header opens the **Ask bar** — a floating, draggable field
+that captures the screen you're looking at, sends it with your prompt to ChatGPT or
+Claude, and shows the reply in place (truncated, with *Show more* and a copy button).
+`Alt+Shift+A` summons it from anywhere, and it's in the tray menu too. Both Sidenote
+windows hide themselves for the capture, so neither ends up in the screenshot.
+
+- All four tabs share one persistent session, so you sign in once and stay signed in.
 - Sign-in popups (Google, Apple, magic links) open in a normal window on that same
   session, so OAuth works.
-- Tabs load lazily — nothing is fetched until you first open the pane, and neither
-  site loads at login.
-- The pane is restricted to those two origins; a webview can't be attached with any
+- Tabs load lazily — nothing is fetched until you first open a tab, and no site
+  loads at login.
+- The pane is restricted to those four origins; a webview can't be attached with any
   other partition or start URL.
 - Auto-collapse is suppressed while the pane is open, so a sign-in popup taking focus
   can't hide the panel mid-login.
@@ -75,8 +97,20 @@ Two things that do work:
    and since it's your normal browser profile, you are usually already signed in.
    Falls back to your default browser if neither is installed.
 
-The pane shows a banner offering that button the moment it lands on a Google
-sign-in page, so the dead end is not silent.
+The pane shows a banner the moment it lands on a Google sign-in page, so the dead
+end is not silent.
+
+**Google mail is the harder case:** a Google account is its *only* way in, so option 1
+doesn't exist there. A tab pointed at Google mail can display a session you already
+have, but it can never start one — its banner says so and offers the pop-out directly
+instead of sending you back to a form that can't help. The warning follows the *URL*,
+not the tab name, so it appears on whichever slot you point at Google.
+
+**Outlook** loads and renders normally in the pane. Microsoft's sign-in is not
+blanket-blocked the way Google's is, but it is their call to make and it may refuse
+in the same way at any time — the ⧉ button is the fallback there too. The tab opens
+`outlook.live.com`; work and school accounts redirect on to `outlook.office.com` by
+themselves.
 
 ### Quick add
 
@@ -94,6 +128,28 @@ Also understood: `today`, `tonight`, `noon`, `midnight`, `in 30m`, `in 3d`,
 `7/28`, `28 jul`, weekday names. The matched words are stripped from the title.
 
 Use the calendar button for an explicit date/time, or to clear one.
+
+### Saving links
+
+In the **Links** tab the composer takes a URL plus anything else you want to say
+about it. A `#tag` anywhere in the line sets the category:
+
+| You type | You get |
+| --- | --- |
+| `figma.com/file/x moodboard #design` | *moodboard* — figma.com, filed under **Design** |
+| `https://news.ycombinator.com` | *News* — no category, filed under **Unsorted** |
+| `github.com/me/repo #work` | *repo* — filed under **Work** |
+| `http://localhost:3000 dev server` | *dev server* — explicit schemes are taken as-is |
+
+The scheme is optional (`https://` is assumed), and a bare hostname needs a real
+TLD, so `v1.2 release notes` and `meeting at 3.30` are *not* mistaken for links —
+if nothing usable is found the composer nudges instead of saving junk.
+
+Leave the title out and the hostname is used (`figma.com` → *Figma*). Use the tag
+button for a picker of categories you already have, or to type a new one; category
+names match case-insensitively, so `reading` and `READING` stay one group.
+
+Renaming a link (✎) also accepts a `#tag` to re-file it.
 
 ---
 
@@ -118,7 +174,8 @@ Use the calendar button for an explicit date/time, or to clear one.
 | --- | --- |
 | `Alt+Shift+N` | Toggle the panel (global) |
 | `Alt+Shift+M` | Move to the next monitor (global) |
-| `Ctrl+1` / `Ctrl+2` | Schedule / Notes |
+| `Alt+Shift+A` | Ask about this screen — floating bar (global) |
+| `Ctrl+1` / `Ctrl+2` / `Ctrl+3` | Schedule / Notes / Links |
 | `/` | Jump to the composer |
 | `Enter` | Add, or commit a rename |
 | `Esc` | Close popover → close sheet → close AI pane → collapse |
@@ -141,7 +198,7 @@ and install the result for a self-contained entry.
 ## Where your data lives
 
 ```
-%APPDATA%\Sidenote\data.json       notes, tasks and events
+%APPDATA%\Sidenote\data.json       notes, tasks, events and saved links
 %APPDATA%\Sidenote\settings.json   preferences, dock position, chosen monitor
 ```
 

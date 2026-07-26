@@ -4,6 +4,7 @@
    Sidenote renderer
    Item = { id, kind:'event'|'task', title, at:number|null, done, doneAt,
             archived, archivedAt, createdAt, notified }
+   Link = { id, url, title, category:string, createdAt }
    ═══════════════════════════════════════════════════════════════════════ */
 
 const api = window.sidenote;
@@ -14,7 +15,6 @@ const el = {
   html: document.documentElement,
   tab: $('#tab'),
   tabBadge: $('#tabBadge'),
-  tabDot: $('#tabDot'),
   panel: $('#panel'),
   grip: $('#grip'),
   weekday: $('#hWeekday'),
@@ -23,6 +23,7 @@ const el = {
   seg: $('#seg'),
   cSchedule: $('#cSchedule'),
   cNotes: $('#cNotes'),
+  cLinks: $('#cLinks'),
   scroller: $('#scroller'),
   list: $('#list'),
   empty: $('#empty'),
@@ -30,9 +31,13 @@ const el = {
   input: $('#input'),
   parsed: $('#parsed'),
   chipWhen: $('#chipWhen'),
+  chipCat: $('#chipCat'),
   hint: $('#hint'),
   pop: $('#when'),
   popInput: $('#whenInput'),
+  catPop: $('#cat'),
+  catList: $('#catList'),
+  catInput: $('#catInput'),
   sheet: $('#sheet'),
   archiveList: $('#archiveList'),
   screenInfo: $('#screenInfo'),
@@ -45,12 +50,24 @@ const el = {
   aiState: $('#aiState'),
   aiStateText: $('#aiStateText'),
   aiNote: $('#aiNote'),
+  aiNoteTitle: $('#aiNoteTitle'),
+  aiNoteBody: $('#aiNoteBody'),
+  aiNoteCta: $('#aiNoteCta'),
+  aiToolbar: $('#aiToolbar'),
+  aiToolName: $('#aiToolName'),
+  toolList: $('#toolList'),
+  toolSearch: $('#toolSearch'),
+  slotLabel: $('#slotLabel'),
+  slotUrl: $('#slotUrl'),
+  slotMsg: $('#slotMsg'),
+  mailPick: $('#mailPick'),
 };
 
-let data = { version: 1, items: [] };
+let data = { version: 1, items: [], links: [] };
 let settings = {};
 let view = 'schedule';
 let manualWhen = null; // { at: number|null } — overrides text parsing until submit
+let manualCat = null; // string | '' (unsorted) | null — same idea for link categories
 let editingId = null;
 let seenIds = new Set();
 
@@ -236,6 +253,108 @@ function parseWhen(raw) {
   return { title, at };
 }
 
+/* ── link parsing ────────────────────────────────────────────────────── */
+
+const UNSORTED = 'Unsorted';
+
+// An explicit scheme is taken at face value (that's how "localhost:3000" gets
+// through); otherwise a token needs a dot and a real-looking TLD, so "v1.2"
+// and "at 3.30" aren't mistaken for links.
+const URL_RE =
+  /(?:^|\s)(https?:\/\/[^\s]+|(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(?::\d{2,5})?(?:[/?#][^\s]*)?)(?=\s|$)/i;
+const TAG_RE = /(?:^|\s)#([\w-]{1,24})(?=\s|$)/;
+
+/** Tidies a category label: "#to-do " → "To Do". */
+function normalizeCat(raw) {
+  const s = String(raw || '')
+    .replace(/^#/, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 24);
+  if (!s || s.toLowerCase() === UNSORTED.toLowerCase()) return '';
+  return s.replace(/\b\p{L}/gu, (c) => c.toUpperCase());
+}
+
+/**
+ * Reuses the spelling of an existing category when one matches case-insensitively,
+ * so "reading" and "READING" don't end up as two separate groups.
+ */
+function canonicalCat(raw) {
+  const s = normalizeCat(raw);
+  if (!s) return '';
+  const hit = categories().find((c) => c.toLowerCase() === s.toLowerCase());
+  return hit || s;
+}
+
+function toUrl(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  try {
+    const u = new URL(/^https?:\/\//i.test(s) ? s : `https://${s}`);
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+const hostOf = (u) => u.hostname.replace(/^www\./i, '');
+
+/** "https://www.figma.com/file/x" → "Figma" */
+function defaultTitle(u) {
+  const label = hostOf(u).split('.')[0] || hostOf(u);
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function linkMeta(url) {
+  const u = toUrl(url);
+  if (!u) return url;
+  const rest = `${u.pathname}${u.search}`.replace(/\/$/, '');
+  const tail = rest.length > 30 ? `${rest.slice(0, 29)}…` : rest;
+  return hostOf(u) + tail;
+}
+
+/** Stable per-host hue so the same site always gets the same coloured chip. */
+function hueOf(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) % 360;
+  return h;
+}
+
+/** Lifts a `#category` out of text, returning it plus the remaining words. */
+function takeTag(raw) {
+  const s = ` ${raw} `;
+  const tag = s.match(TAG_RE);
+  const rest = tag ? `${s.slice(0, tag.index)} ${s.slice(tag.index + tag[0].length)}` : s;
+  return {
+    category: tag ? normalizeCat(tag[1]) : null,
+    rest: rest.replace(/\s+/g, ' ').trim(),
+  };
+}
+
+/**
+ * Pulls a URL and an optional `#category` out of free text; whatever is left
+ * becomes the title.
+ */
+function parseLink(raw) {
+  const tagged = takeTag(raw);
+  const category = tagged.category;
+  let s = ` ${tagged.rest} `;
+
+  const m = s.match(URL_RE);
+  let url = null;
+  if (m) {
+    const u = toUrl(m[1]);
+    if (u) {
+      url = u.href;
+      s = `${s.slice(0, m.index)} ${s.slice(m.index + m[0].length)}`;
+    }
+  }
+
+  const title = s.replace(/\s+/g, ' ').replace(/^[-–—:|,]+|[-–—:|,]+$/g, '').trim();
+  return { url, title, category };
+}
+
 /* ── persistence ─────────────────────────────────────────────────────── */
 
 let saveTimer = null;
@@ -247,6 +366,16 @@ function save() {
 const items = () => data.items;
 const find = (id) => data.items.find((i) => i.id === id);
 const live = (kind) => data.items.filter((i) => i.kind === kind && !i.archived);
+
+const links = () => data.links;
+const findLink = (id) => data.links.find((l) => l.id === id);
+
+/** Every category currently in use, alphabetical. */
+function categories() {
+  const set = new Set();
+  for (const l of links()) if (l.category) set.add(l.category);
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
 
 /* ── grouping ────────────────────────────────────────────────────────── */
 
@@ -340,7 +469,86 @@ function itemHtml(item, nextId) {
   </article>`;
 }
 
+function linkHtml(link) {
+  const cls = ['item', 'is-link'];
+  if (!seenIds.has(link.id)) cls.push('entering');
+  seenIds.add(link.id);
+
+  const u = toUrl(link.url);
+  const host = u ? hostOf(u) : link.url;
+  // Letter and tint both come from the host, so the chip reads as a site badge
+  // the way a favicon would — renaming the link doesn't change it.
+  const letter = host.replace(/^\W+/, '').charAt(0).toUpperCase() || '?';
+
+  const titleHtml =
+    editingId === link.id
+      ? `<input class="title-edit" value="${esc(link.title)}" maxlength="240" />`
+      : `<span class="title">${esc(link.title)}</span>`;
+
+  // The hue rides on a data attribute, not an inline style: our CSP is
+  // `style-src 'self'`, which blocks style="" attributes outright.
+  return `<article class="${cls.join(' ')}" data-id="${link.id}" title="${esc(link.url)}">
+    <span class="fav" data-hue="${hueOf(host)}" aria-hidden="true">${esc(letter)}</span>
+    <div class="body">
+      <div class="row1">${titleHtml}</div>
+      <div class="meta">${esc(linkMeta(link.url))}</div>
+    </div>
+    <div class="acts">
+      <button data-act="edit" title="Rename">${ICON('i-pencil')}</button>
+      <button data-act="del" title="Delete">${ICON('i-trash')}</button>
+    </div>
+  </article>`;
+}
+
+function renderLinks() {
+  const all = links();
+  const map = new Map();
+  for (const l of all) {
+    const key = l.category || '';
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(l);
+  }
+
+  // Named categories alphabetically; anything unfiled sits at the bottom.
+  const groups = Array.from(map.entries()).sort(([a], [b]) => {
+    if (!a) return 1;
+    if (!b) return -1;
+    return a.localeCompare(b);
+  });
+
+  el.list.innerHTML = groups
+    .map(([cat, rows]) => {
+      rows.sort((x, y) => y.createdAt - x.createdAt);
+      return (
+        `<div class="group-label">${esc(cat || UNSORTED)}</div>` + rows.map(linkHtml).join('')
+      );
+    })
+    .join('');
+
+  // setProperty from script is allowed where a style attribute is not.
+  $$('.fav', el.list).forEach((n) => n.style.setProperty('--fav-h', n.dataset.hue));
+
+  el.empty.hidden = all.length > 0;
+  if (!all.length) {
+    $('.empty-t', el.empty).textContent = 'No links saved';
+    $('.empty-s', el.empty).textContent = 'Paste a URL below — add #design to file it under a category.';
+    $('.empty svg use', el.empty)?.setAttribute('href', '#i-link');
+  }
+
+  if (editingId) {
+    const input = $('.title-edit', el.list);
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }
+  renderCounts();
+}
+
 function renderList() {
+  if (view === 'links') return renderLinks();
+  $('.empty svg use', el.empty)?.setAttribute('href', '#i-inbox');
+
   const kind = view === 'schedule' ? 'event' : 'task';
   const list = live(kind);
   const nextId = nextUpId(list);
@@ -377,17 +585,19 @@ function renderList() {
 function renderCounts() {
   const ev = live('event').filter((i) => !i.done).length;
   const tk = live('task').filter((i) => !i.done).length;
+  const lk = links().length;
   el.cSchedule.textContent = ev;
   el.cNotes.textContent = tk;
+  el.cLinks.textContent = lk;
   el.cSchedule.classList.toggle('is-zero', ev === 0);
   el.cNotes.classList.toggle('is-zero', tk === 0);
+  el.cLinks.classList.toggle('is-zero', lk === 0);
 
   // Tab badge counts what actually needs attention today.
   const soon = startOfDay(Date.now()) + DAY;
   const due = items().filter((i) => !i.archived && !i.done && i.at != null && i.at < soon).length;
   el.tabBadge.hidden = due === 0;
   el.tabBadge.textContent = due > 99 ? '99+' : String(due);
-  el.tabDot.classList.toggle('is-idle', ev + tk === 0);
 }
 
 function renderHeader() {
@@ -461,6 +671,50 @@ function addItem(title, at) {
   save();
   renderAll();
   el.scroller.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function addLink(url, title, category) {
+  const u = toUrl(url);
+  if (!u) return false;
+  const link = {
+    id: uid(),
+    url: u.href,
+    title: title || defaultTitle(u),
+    category: canonicalCat(category),
+    createdAt: Date.now(),
+  };
+  data.links.push(link);
+  save();
+  renderAll();
+  el.scroller.scrollTo({ top: 0, behavior: 'smooth' });
+  return true;
+}
+
+function removeLink(id) {
+  const link = findLink(id);
+  if (!link) return;
+  const snapshot = { ...link };
+  data.links = data.links.filter((l) => l.id !== id);
+  save();
+
+  const node = el.list.querySelector(`[data-id="${id}"]`);
+  const done = () => {
+    renderAll();
+    showToast(`Deleted · ${snapshot.title}`, () => {
+      data.links.push(snapshot);
+      save();
+      renderAll();
+    });
+  };
+  if (node) {
+    node.classList.add('leaving');
+    setTimeout(done, 280);
+  } else done();
+}
+
+function openLink(id) {
+  const link = findLink(id);
+  if (link) api.links.open(link.url);
 }
 
 /**
@@ -557,8 +811,9 @@ function removeItem(id) {
 
 function showToast(text, onUndo) {
   clearTimeout(toastTimer);
-  undoAction = onUndo;
+  undoAction = onUndo || null;
   el.toastText.textContent = text;
+  el.toastUndo.hidden = !undoAction;
   el.toast.hidden = false;
   el.toast.classList.remove('is-out');
   toastTimer = setTimeout(hideToast, 5000);
@@ -588,10 +843,27 @@ function currentWhen() {
   return parseWhen(el.input.value).at;
 }
 
+function currentCat() {
+  if (manualCat !== null) return manualCat;
+  return parseLink(el.input.value).category ?? '';
+}
+
 function refreshComposer() {
   const text = el.input.value.trim();
   el.form.classList.toggle('has-text', text.length > 0);
 
+  if (view === 'links') {
+    const cat = currentCat();
+    el.chipWhen.hidden = true;
+    el.chipCat.hidden = !cat;
+    el.parsed.hidden = !cat;
+    if (cat) $('span', el.chipCat).textContent = cat;
+    $('[data-act="cat"]').classList.toggle('is-on', !!cat);
+    return;
+  }
+
+  el.chipCat.hidden = true;
+  el.chipWhen.hidden = false;
   const at = currentWhen();
   if (at == null) {
     el.parsed.hidden = true;
@@ -617,6 +889,23 @@ el.form.addEventListener('submit', (e) => {
   const raw = el.input.value.trim();
   if (!raw) return;
 
+  if (view === 'links') {
+    const parsed = parseLink(raw);
+    if (!parsed.url) {
+      // Nothing usable — say so rather than silently swallowing the input.
+      el.form.classList.add('is-bad');
+      setTimeout(() => el.form.classList.remove('is-bad'), 500);
+      showToast('That doesn’t look like a link', null);
+      return;
+    }
+    addLink(parsed.url, parsed.title, manualCat !== null ? manualCat : parsed.category);
+    el.input.value = '';
+    manualCat = null;
+    refreshComposer();
+    el.input.focus();
+    return;
+  }
+
   const parsed = parseWhen(raw);
   let title;
   let at;
@@ -637,11 +926,13 @@ el.form.addEventListener('submit', (e) => {
 });
 
 $('#chipClear').addEventListener('click', () => {
-  manualWhen = { at: null };
+  if (view === 'links') manualCat = '';
+  else manualWhen = { at: null };
   refreshComposer();
   el.input.focus();
 });
 el.chipWhen.addEventListener('click', () => openWhen());
+el.chipCat.addEventListener('click', () => openCat());
 
 /* ── when popover ────────────────────────────────────────────────────── */
 
@@ -702,6 +993,52 @@ el.pop.addEventListener('click', (e) => {
   }
 });
 
+/* ── category popover ────────────────────────────────────────────────── */
+
+function renderCatList() {
+  const current = currentCat();
+  el.catList.innerHTML = categories()
+    .map(
+      (c) =>
+        `<button type="button" data-cat="${esc(c)}"${c === current ? ' class="is-on"' : ''}>${esc(c)}</button>`
+    )
+    .join('');
+}
+
+function openCat() {
+  renderCatList();
+  el.catInput.value = '';
+  el.catPop.hidden = false;
+  el.catInput.focus();
+}
+function closeCat() {
+  el.catPop.hidden = true;
+}
+
+function pickCat(value) {
+  manualCat = canonicalCat(value);
+  closeCat();
+  refreshComposer();
+  el.input.focus();
+}
+
+el.catPop.addEventListener('click', (e) => {
+  const chip = e.target.closest('[data-cat]');
+  if (chip) return pickCat(chip.dataset.cat);
+
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (act === 'catClose') closeCat();
+  if (act === 'catNone') pickCat('');
+  if (act === 'catSet') pickCat(el.catInput.value);
+});
+
+el.catInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    pickCat(el.catInput.value);
+  }
+});
+
 /* ── list interactions ───────────────────────────────────────────────── */
 
 el.list.addEventListener('click', (e) => {
@@ -709,6 +1046,17 @@ el.list.addEventListener('click', (e) => {
   if (!node) return;
   const id = node.dataset.id;
   const act = e.target.closest('[data-act]')?.dataset.act;
+
+  if (node.classList.contains('is-link')) {
+    if (act === 'del') removeLink(id);
+    else if (act === 'edit') {
+      editingId = id;
+      renderList();
+    } else if (!e.target.closest('.title-edit')) {
+      openLink(id); // anywhere else on the row opens it in the real browser
+    }
+    return;
+  }
 
   if (act === 'toggle') complete(id);
   else if (act === 'del') removeItem(id);
@@ -720,14 +1068,31 @@ el.list.addEventListener('click', (e) => {
 
 el.list.addEventListener('dblclick', (e) => {
   const node = e.target.closest('.item');
-  if (!node || e.target.closest('button')) return;
+  // A single click already opens a link, so double-click must not also edit it.
+  if (!node || node.classList.contains('is-link') || e.target.closest('button')) return;
   editingId = node.dataset.id;
   renderList();
 });
 
 function commitEdit(input, keep) {
   const node = input.closest('.item');
-  const item = find(node?.dataset.id);
+  const id = node?.dataset.id;
+
+  if (node?.classList.contains('is-link')) {
+    const link = findLink(id);
+    if (link && keep) {
+      // Typing "#work" while renaming re-files the link.
+      const { category, rest } = takeTag(input.value);
+      if (category !== null) link.category = canonicalCat(category);
+      if (rest) link.title = rest;
+      save();
+    }
+    editingId = null;
+    renderAll();
+    return;
+  }
+
+  const item = find(id);
   if (item && keep) {
     const v = input.value.trim();
     if (v) item.title = v;
@@ -757,16 +1122,37 @@ el.list.addEventListener(
 
 /* ── views ───────────────────────────────────────────────────────────── */
 
+const PLACEHOLDER = {
+  schedule: 'Add an event…',
+  notes: 'Add a note or task…',
+  links: 'Paste a link…',
+};
+const HINT = {
+  schedule: 'Try “standup tomorrow 9:30am”',
+  notes: 'Try “email Ana friday” — time is optional',
+  links: 'Try “figma.com/file/x moodboard #design”',
+};
+
+function applyViewChrome() {
+  el.html.dataset.view = view;
+  $$('.seg-btn').forEach((b) => b.classList.toggle('is-on', b.dataset.view === view));
+  el.input.placeholder = PLACEHOLDER[view];
+  el.hint.textContent = HINT[view];
+  $('[data-act="when"]').hidden = view === 'links';
+  $('[data-act="cat"]').hidden = view !== 'links';
+}
+
 function setView(next) {
   if (next === view) return;
   view = next;
-  el.html.dataset.view = view;
-  $$('.seg-btn').forEach((b) => b.classList.toggle('is-on', b.dataset.view === view));
-  el.input.placeholder = view === 'schedule' ? 'Add an event…' : 'Add a note or task…';
-  el.hint.textContent =
-    view === 'schedule' ? 'Try “standup tomorrow 9:30am”' : 'Try “email Ana friday” — time is optional';
+  closeWhen();
+  closeCat();
+  manualWhen = null;
+  manualCat = null;
+  applyViewChrome();
   api.settings.set({ view });
   renderList();
+  refreshComposer();
 }
 
 el.seg.addEventListener('click', (e) => {
@@ -784,6 +1170,7 @@ function openSheet(pane = 'archive') {
   syncSettingsUi();
 }
 function closeSheet() {
+  $('[data-act="tools"]').classList.remove('is-on');
   el.sheet.classList.add('is-out');
   setTimeout(() => {
     el.sheet.hidden = true;
@@ -793,6 +1180,11 @@ function closeSheet() {
 function setPane(pane) {
   $$('.sheet-seg button').forEach((b) => b.classList.toggle('is-on', b.dataset.sheet === pane));
   $$('[data-pane]').forEach((s) => (s.hidden = s.dataset.pane !== pane));
+  $('[data-act="tools"]').classList.toggle('is-on', pane === 'tools');
+  if (pane === 'tools') {
+    loadTools();
+    setTimeout(() => el.toolSearch.focus(), 60);
+  }
 }
 
 el.sheet.addEventListener('click', (e) => {
@@ -831,6 +1223,32 @@ el.sheet.addEventListener('click', (e) => {
   if (act === 'screen') api.dock.cycleDisplay();
   if (act === 'quit') api.quit();
 
+  const mail = e.target.closest('[data-mail]');
+  if (mail) {
+    api.ai.setMail(mail.dataset.mail).then((res) => {
+      if (res?.ok) applyPaneSites(res.sites, 'mail');
+    });
+    return;
+  }
+
+  if (act === 'slotSave') {
+    el.slotMsg.textContent = '';
+    el.slotMsg.classList.remove('is-bad');
+    api.ai.setCustom({ label: el.slotLabel.value, url: el.slotUrl.value }).then((res) => {
+      if (res?.ok) {
+        applyPaneSites(res.sites, 'custom');
+        el.slotMsg.textContent = 'Saved';
+        setTimeout(() => {
+          el.slotMsg.textContent = '';
+        }, 1600);
+      } else {
+        el.slotMsg.textContent = res?.error || 'Could not save that';
+        el.slotMsg.classList.add('is-bad');
+      }
+    });
+    return;
+  }
+
   const pick = e.target.closest('.pick button');
   if (pick) {
     const key = pick.parentElement.dataset.pick;
@@ -849,6 +1267,37 @@ async function applySettings(patch) {
   settings = await api.settings.set(patch);
   syncSettingsUi();
   if ('onComplete' in patch) renderAll();
+}
+
+/**
+ * A slot's site changed: relabel the strip and drop the old webview so the
+ * next visit loads the new address rather than the previous tenant.
+ */
+function applyPaneSites(sites, changedKey) {
+  aiSites = sites || aiSites;
+  renderAiTabs();
+  const view = aiViews.get(changedKey);
+  if (view) {
+    view.remove();
+    aiViews.delete(changedKey);
+  }
+  if (aiTab === changedKey && aiOpen()) setAiTab(changedKey);
+  renderSlotUi();
+}
+
+function renderSlotUi() {
+  const custom = aiSites.custom;
+  if (custom && document.activeElement !== el.slotLabel && document.activeElement !== el.slotUrl) {
+    el.slotLabel.value = custom.label || '';
+    el.slotUrl.value = custom.url || '';
+  }
+  const mailUrl = aiSites.mail?.url;
+  el.mailPick.innerHTML = mailProviders
+    .map(
+      (p) =>
+        `<button type="button" data-mail="${esc(p.id)}"${p.url === mailUrl ? ' class="is-on"' : ''}>${esc(p.label)}</button>`
+    )
+    .join('');
 }
 
 function syncSettingsUi() {
@@ -878,9 +1327,54 @@ function cycleTheme() {
 const AI_PARTITION = 'persist:sidenote-ai';
 const aiViews = new Map(); // key -> <webview>
 let aiSites = {};
+let mailProviders = [];
 let aiTab = 'chatgpt';
 
+/** Tab labels come from settings, so the strip is rebuilt whenever they change. */
+function renderAiTabs() {
+  $$('button', el.aiSeg).forEach((b) => {
+    const site = aiSites[b.dataset.ai];
+    if (site) {
+      b.textContent = site.label;
+      b.title = site.url;
+    }
+  });
+}
+
+/**
+ * A slot pointed at Google mail hits the same embedded-browser block as
+ * "Sign in with Google", so the warning follows the URL, not the tab name.
+ */
+function isGoogleOnly(key) {
+  try {
+    return new URL(aiSites[key].url).hostname.endsWith('google.com');
+  } catch (_) {
+    return false;
+  }
+}
+
 const aiOpen = () => !el.ai.hidden;
+
+/**
+ * Google blocks sign-in inside embedded browser frameworks. Which advice is
+ * useful depends on whether the site offers a non-Google way in.
+ */
+function showGoogleNote(key) {
+  if (isGoogleOnly(key)) {
+    el.aiNoteTitle.textContent = `${aiSites[key].label} can only be signed in from a real browser.`;
+    el.aiNoteBody.textContent =
+      ' Google blocks sign-in inside embedded panes, and Google mail has no other way in. Open it in a browser window — that session stays there.';
+    el.aiNoteCta.textContent = 'Open in browser';
+    el.aiNoteCta.dataset.act = 'aiPopout';
+  } else {
+    el.aiNoteTitle.textContent = 'Google sign-in only works in a real browser';
+    el.aiNoteBody.textContent =
+      ', and that session stays there — it won’t sign you in here. Go back and use your email address instead.';
+    el.aiNoteCta.textContent = 'Back to sign-in';
+    el.aiNoteCta.dataset.act = 'aiBack';
+  }
+  el.aiNote.hidden = false;
+}
 
 function showAiState(text, isError = false) {
   el.aiStateText.textContent = text;
@@ -903,6 +1397,9 @@ function ensureAiView(key) {
   view.setAttribute('src', site.url);
   view.hidden = true;
 
+  view.addEventListener('dom-ready', () => {
+    view.dataset.ready = '1';
+  });
   view.addEventListener('did-start-loading', () => {
     if (aiTab === key) showAiState(`Loading ${site.label}…`);
   });
@@ -925,7 +1422,7 @@ function ensureAiView(key) {
     } catch (_) {
       return;
     }
-    if (host.endsWith('accounts.google.com')) el.aiNote.hidden = false;
+    if (host.endsWith('accounts.google.com')) showGoogleNote(key);
   };
   view.addEventListener('did-navigate', checkGoogle);
   view.addEventListener('did-navigate-in-page', checkGoogle);
@@ -937,6 +1434,13 @@ function ensureAiView(key) {
 
 function setAiTab(key) {
   if (!aiSites[key]) return;
+  // Picking a chat tab always leaves tool mode.
+  if (activeTool) {
+    activeTool = null;
+    el.aiSeg.hidden = false;
+    el.aiToolbar.hidden = true;
+    if (toolView) toolView.hidden = true;
+  }
   aiTab = key;
   el.aiSeg.dataset.on = key;
   $$('button', el.aiSeg).forEach((b) => b.classList.toggle('is-on', b.dataset.ai === key));
@@ -947,19 +1451,28 @@ function setAiTab(key) {
   aiViews.forEach((v, k) => {
     v.hidden = k !== key;
   });
-  if (view && typeof view.isLoading === 'function' && view.isLoading()) {
-    showAiState(`Loading ${aiSites[key].label}…`);
+  // isLoading() throws until the guest is attached and dom-ready has fired, so
+  // a tab switched to immediately after creation must not be asked.
+  try {
+    if (view && view.dataset.ready === '1' && view.isLoading()) {
+      showAiState(`Loading ${aiSites[key].label}…`);
+    } else if (view && view.dataset.ready !== '1') {
+      showAiState(`Loading ${aiSites[key].label}…`);
+    }
+  } catch (_) {
+    /* not attached yet — the load events will settle the state */
   }
   api.ai.setTab(key);
 }
 
-function openAiPane() {
+/** `skipTab` opens the pane without booting a chat site — used by the tools. */
+function openAiPane({ skipTab = false } = {}) {
   if (!el.pop.hidden) closeWhen();
   if (!el.sheet.hidden) closeSheet();
   el.ai.hidden = false;
   el.html.classList.add('ai-mode');
   $('[data-act="ai"]').classList.add('is-on');
-  setAiTab(aiTab);
+  if (!skipTab) setAiTab(aiTab);
   api.ai.setOpen(true);
 }
 
@@ -967,6 +1480,11 @@ function closeAiPane() {
   el.ai.hidden = true;
   el.html.classList.remove('ai-mode');
   $('[data-act="ai"]').classList.remove('is-on');
+  // Next open should start on the chat tabs, not a stale tool.
+  activeTool = null;
+  el.aiSeg.hidden = false;
+  el.aiToolbar.hidden = true;
+  if (toolView) toolView.hidden = true;
   api.ai.setOpen(false);
 }
 
@@ -978,8 +1496,13 @@ el.ai.addEventListener('click', (e) => {
 
   const act = e.target.closest('[data-act]')?.dataset.act;
   if (act === 'aiClose') closeAiPane();
+  if (act === 'aiAsk') api.ask.show();
+  if (act === 'toolBack') closeTool();
   if (act === 'aiNoteClose') el.aiNote.hidden = true;
-  if (act === 'aiPopout') api.ai.popOut(aiTab);
+  if (act === 'aiPopout') {
+    if (activeTool) api.links.open(activeTool.url);
+    else api.ai.popOut(aiTab);
+  }
   if (act === 'aiBack') {
     // Get off Google's rejection page and back to the site's own sign-in form,
     // where an email address can be used instead.
@@ -991,12 +1514,199 @@ el.ai.addEventListener('click', (e) => {
     }
   }
   if (act === 'aiReload') {
-    const view = aiViews.get(aiTab);
+    const view = activeTool ? toolView : aiViews.get(aiTab);
     if (view) {
       hideAiState();
       el.aiNote.hidden = true;
       view.reload();
     }
+  }
+});
+
+/* ── tool launcher ───────────────────────────────────────────────────── */
+
+let tools = [];
+let toolFilter = '';
+let toolEditing = null; // tool id whose URL row is open
+let toolView = null; // one reusable webview for every tool
+let activeTool = null;
+
+const prettyUrl = (u) => String(u).replace(/^https?:\/\//, '').replace(/\/$/, '');
+
+function renderTools() {
+  const q = toolFilter.trim().toLowerCase();
+  const list = q
+    ? tools.filter((t) => t.label.toLowerCase().includes(q) || t.cat.toLowerCase().includes(q))
+    : tools;
+
+  if (!list.length) {
+    el.toolList.innerHTML = `<div class="empty">${ICON('i-search')}
+      <p class="empty-t">No tool matches</p>
+      <p class="empty-s">Try “pdf”, “image” or “convert”.</p></div>`;
+    return;
+  }
+
+  let html = '';
+  let cat = null;
+  for (const t of list) {
+    if (t.cat !== cat) {
+      cat = t.cat;
+      html += `<div class="group-label">${esc(cat)}</div>`;
+    }
+    html += `<div class="tool-row${t.custom ? ' is-custom' : ''}" data-tool="${esc(t.id)}">
+      <div class="body">
+        <div class="tool-name">${esc(t.label)}</div>
+        <div class="tool-url">${esc(prettyUrl(t.url))}</div>
+      </div>
+      <div class="tool-acts">
+        <button data-act="toolEdit" title="Change the site this opens">${ICON('i-pencil')}</button>
+        ${t.custom ? `<button data-act="toolReset" title="Restore the default">${ICON('i-undo')}</button>` : ''}
+      </div>
+    </div>`;
+
+    if (toolEditing === t.id) {
+      html += `<div class="tool-edit" data-tool="${esc(t.id)}">
+        <input class="tool-url-input" type="text" value="${esc(t.url)}" spellcheck="false"
+               placeholder="https://example.com" maxlength="400" />
+        <button class="btn btn-primary" data-act="toolSave">Save</button>
+      </div>`;
+    }
+  }
+  el.toolList.innerHTML = html;
+
+  if (toolEditing) {
+    const input = $('.tool-url-input', el.toolList);
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }
+}
+
+async function loadTools() {
+  try {
+    tools = (await api.tools.list()) || [];
+  } catch (_) {
+    tools = [];
+  }
+  renderTools();
+}
+
+/** Tools share one webview: switching tool just navigates it. */
+function ensureToolView(url) {
+  if (toolView) return toolView;
+  const view = document.createElement('webview');
+  view.setAttribute('partition', AI_PARTITION);
+  view.setAttribute('allowpopups', '');
+  view.setAttribute('src', url);
+  view.classList.add('is-tool');
+
+  view.addEventListener('dom-ready', () => {
+    view.dataset.ready = '1';
+  });
+  view.addEventListener('did-start-loading', () => {
+    if (activeTool) showAiState('Loading…');
+  });
+  view.addEventListener('did-stop-loading', () => {
+    if (activeTool) hideAiState();
+  });
+  view.addEventListener('did-fail-load', (e) => {
+    if (e.errorCode === -3) return;
+    if (activeTool) showAiState("Couldn't load this tool. Check the address or your connection.", true);
+  });
+
+  el.aiBody.appendChild(view);
+  toolView = view;
+  return view;
+}
+
+function openTool(id) {
+  const tool = tools.find((t) => t.id === id);
+  if (!tool) return;
+
+  activeTool = tool;
+  closeSheet();
+
+  if (!aiOpen()) openAiPane({ skipTab: true });
+  el.aiSeg.hidden = true;
+  el.aiToolbar.hidden = false;
+  el.aiToolName.textContent = tool.label;
+  el.aiNote.hidden = true;
+
+  // Park the chat views and show the tool one.
+  aiViews.forEach((v) => {
+    v.hidden = true;
+  });
+  const view = ensureToolView(tool.url);
+  view.hidden = false;
+  showAiState(`Loading ${tool.label}…`);
+
+  let current = '';
+  try {
+    current = view.getURL();
+  } catch (_) {
+    current = '';
+  }
+  if (current && current !== tool.url) view.loadURL(tool.url);
+}
+
+/** Leave tool mode and put the chat tabs back. */
+function closeTool() {
+  activeTool = null;
+  el.aiSeg.hidden = false;
+  el.aiToolbar.hidden = true;
+  if (toolView) toolView.hidden = true;
+  hideAiState();
+  setAiTab(aiTab);
+}
+
+el.toolSearch.addEventListener('input', () => {
+  toolFilter = el.toolSearch.value;
+  toolEditing = null;
+  renderTools();
+});
+
+el.toolList.addEventListener('click', async (e) => {
+  const row = e.target.closest('[data-tool]');
+  if (!row) return;
+  const id = row.dataset.tool;
+  const act = e.target.closest('[data-act]')?.dataset.act;
+
+  if (act === 'toolEdit') {
+    toolEditing = toolEditing === id ? null : id;
+    return renderTools();
+  }
+  if (act === 'toolReset') {
+    const res = await api.tools.setUrl(id, '');
+    if (res?.ok) tools = res.tools;
+    toolEditing = null;
+    return renderTools();
+  }
+  if (act === 'toolSave') {
+    const input = $('.tool-url-input', row.closest('.tool-edit') || el.toolList);
+    const res = await api.tools.setUrl(id, input ? input.value : '');
+    if (res?.ok) {
+      tools = res.tools;
+      toolEditing = null;
+      renderTools();
+    } else {
+      showToast(res?.error || 'That address looks wrong', null);
+    }
+    return;
+  }
+  if (row.classList.contains('tool-row')) openTool(id);
+});
+
+el.toolList.addEventListener('keydown', (e) => {
+  if (!e.target.classList.contains('tool-url-input')) return;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const wrap = e.target.closest('.tool-edit');
+    if (wrap) $('[data-act="toolSave"]', wrap)?.click();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    toolEditing = null;
+    renderTools();
   }
 });
 
@@ -1008,10 +1718,16 @@ $('.head-actions').addEventListener('click', (e) => {
   else if (act === 'theme') cycleTheme();
   else if (act === 'ai') toggleAiPane();
   else if (act === 'menu') (el.sheet.hidden ? openSheet('archive') : closeSheet());
-  else if (act === 'screen') api.dock.cycleDisplay();
+  else if (act === 'tools') {
+    // Straight to the launcher; clicking again closes it.
+    const onTools = !el.sheet.hidden && $('[data-pane="tools"]') && !$('[data-pane="tools"]').hidden;
+    if (onTools) closeSheet();
+    else openSheet('tools');
+  } else if (act === 'screen') api.dock.cycleDisplay();
 });
 
 $('[data-act="when"]').addEventListener('click', () => (el.pop.hidden ? openWhen() : closeWhen()));
+$('[data-act="cat"]').addEventListener('click', () => (el.catPop.hidden ? openCat() : closeCat()));
 
 /* ── dock state + dragging ───────────────────────────────────────────── */
 
@@ -1080,14 +1796,15 @@ makeDraggable(el.tab, () => api.dock.expand());
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (!el.pop.hidden) return closeWhen();
+    if (!el.catPop.hidden) return closeCat();
     if (!el.sheet.hidden) return closeSheet();
     if (aiOpen()) return closeAiPane();
     if (editingId) return;
     return api.dock.collapse();
   }
-  if (e.ctrlKey && (e.key === '1' || e.key === '2')) {
+  if (e.ctrlKey && ['1', '2', '3'].includes(e.key)) {
     e.preventDefault();
-    setView(e.key === '1' ? 'schedule' : 'notes');
+    setView({ 1: 'schedule', 2: 'notes', 3: 'links' }[e.key]);
   }
   if (e.key === '/' && document.activeElement !== el.input && !editingId) {
     e.preventDefault();
@@ -1098,6 +1815,9 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('pointerdown', (e) => {
   if (!el.pop.hidden && !el.pop.contains(e.target) && !e.target.closest('[data-act="when"], #chipWhen')) {
     closeWhen();
+  }
+  if (!el.catPop.hidden && !el.catPop.contains(e.target) && !e.target.closest('[data-act="cat"], #chipCat')) {
+    closeCat();
   }
 });
 
@@ -1138,15 +1858,18 @@ setInterval(() => {
 /* ── boot ────────────────────────────────────────────────────────────── */
 
 (async function boot() {
-  const [loaded, s, metrics, sites] = await Promise.all([
+  const [loaded, s, metrics, sites, providers] = await Promise.all([
     api.data.load(),
     api.settings.get(),
     api.dock.metrics(),
     api.ai.sites(),
+    api.ai.providers(),
   ]);
 
   aiSites = sites || {};
+  mailProviders = providers || [];
   if (aiSites[s.aiTab]) aiTab = s.aiTab;
+  renderAiTabs();
 
   data = loaded && Array.isArray(loaded.items) ? loaded : { version: 1, items: [] };
   // Legacy shape from an earlier build.
@@ -1156,16 +1879,18 @@ setInterval(() => {
       ...(loaded.tasks || []).map((i) => ({ ...i, kind: 'task' })),
     ];
   }
+  // Links arrived in 1.2 — older data files simply don't have the array.
+  if (!Array.isArray(data.links)) data.links = [];
   data.items.forEach((i) => seenIds.add(i.id));
+  data.links.forEach((l) => seenIds.add(l.id));
 
   settings = s;
-  view = s.view === 'notes' ? 'notes' : 'schedule';
-  el.html.dataset.view = view;
-  $$('.seg-btn').forEach((b) => b.classList.toggle('is-on', b.dataset.view === view));
-  el.input.placeholder = view === 'schedule' ? 'Add an event…' : 'Add a note or task…';
+  view = ['notes', 'links'].includes(s.view) ? s.view : 'schedule';
+  applyViewChrome();
 
   applyDock(metrics);
   syncSettingsUi();
+  renderSlotUi();
   renderAll();
   refreshComposer();
 

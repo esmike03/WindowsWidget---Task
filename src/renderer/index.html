@@ -31,6 +31,12 @@
     <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3.5l1.9 4.9 4.9 1.9-4.9 1.9L12 17.1l-1.9-4.9-4.9-1.9 4.9-1.9z"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 4.5V11h-6.5"/></symbol>
     <symbol id="i-popout" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8.5 8.5"/><path d="M18 14.5V19a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V7.5A1.5 1.5 0 0 1 5 6h4.5"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M11.4 3.5H20.5v9.1l-8.4 8.4a1.7 1.7 0 0 1-2.4 0l-6.7-6.7a1.7 1.7 0 0 1 0-2.4z"/><circle cx="16.4" cy="7.6" r="1.35"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10.2 13.8a3.9 3.9 0 0 0 5.8.4l2.9-2.9a3.9 3.9 0 0 0-5.5-5.5l-1.7 1.7"/><path d="M13.8 10.2a3.9 3.9 0 0 0-5.8-.4l-2.9 2.9a3.9 3.9 0 0 0 5.5 5.5l1.7-1.7"/></symbol>
+    <symbol id="i-apps" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8L20.5 20.5"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+    <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M15.6 8.4a3.9 3.9 0 0 1-4.9 4.9L5.6 18.4a1.9 1.9 0 0 1-2.7-2.7l5.1-5.1a3.9 3.9 0 0 1 4.9-4.9l-2.4 2.4 2.1 2.1 2.4-2.4a3.9 3.9 0 0 1 .6.6z"/></symbol>
   </defs>
 </svg>
 
@@ -38,7 +44,6 @@
 <button id="tab" type="button" title="Sidenote — Alt+Shift+N">
   <span class="tab-sheen" aria-hidden="true"></span>
   <span class="tab-inner">
-    <span class="tab-dot" id="tabDot"></span>
     <span class="tab-label">SIDENOTE</span>
   </span>
   <span class="tab-badge" id="tabBadge" hidden>0</span>
@@ -58,8 +63,9 @@
       <div class="d-sub" id="hSub">—</div>
     </div>
     <div class="head-actions">
-      <button class="ico ico-ai" data-act="ai" title="ChatGPT &amp; Claude"><svg><use href="#i-spark"/></svg></button>
+      <button class="ico ico-ai" data-act="ai" title="ChatGPT, Claude, Gmail &amp; Outlook"><svg><use href="#i-apps"/></svg></button>
       <button class="ico" data-act="screen" title="Move to next screen (Alt+Shift+M)"><svg><use href="#i-monitor"/></svg></button>
+      <button class="ico ico-tools" data-act="tools" title="Tools — background remover, PDF, converters…"><svg><use href="#i-wrench"/></svg></button>
       <button class="ico" data-act="theme" title="Toggle theme"><svg class="ico-sun"><use href="#i-sun"/></svg><svg class="ico-moon"><use href="#i-moon"/></svg></button>
       <button class="ico" data-act="menu" title="Archive &amp; settings"><svg><use href="#i-sliders"/></svg></button>
       <button class="ico ico-collapse" data-act="collapse" title="Collapse (Alt+Shift+N)"><svg><use href="#i-chevron"/></svg></button>
@@ -70,6 +76,7 @@
     <span class="seg-thumb" aria-hidden="true"></span>
     <button class="seg-btn is-on" role="tab" data-view="schedule">Schedule<em id="cSchedule">0</em></button>
     <button class="seg-btn" role="tab" data-view="notes">Notes<em id="cNotes">0</em></button>
+    <button class="seg-btn" role="tab" data-view="links">Links<em id="cLinks">0</em></button>
   </nav>
 
   <div id="scroller">
@@ -85,10 +92,12 @@
   <footer id="composer">
     <div id="parsed" class="parsed" hidden>
       <button class="chip chip-when" id="chipWhen" type="button"><svg><use href="#i-clock"/></svg><span></span></button>
-      <button class="chip chip-clear" id="chipClear" type="button" title="Clear time"><svg><use href="#i-x"/></svg></button>
+      <button class="chip chip-cat" id="chipCat" type="button" hidden><svg><use href="#i-tag"/></svg><span></span></button>
+      <button class="chip chip-clear" id="chipClear" type="button" title="Clear"><svg><use href="#i-x"/></svg></button>
     </div>
     <form id="form" autocomplete="off">
       <button class="ico ico-when" type="button" data-act="when" title="Pick date &amp; time"><svg><use href="#i-calendar"/></svg></button>
+      <button class="ico ico-cat" type="button" data-act="cat" title="Pick a category" hidden><svg><use href="#i-tag"/></svg></button>
       <input id="input" type="text" placeholder="Add an event…" spellcheck="false" maxlength="240" />
       <button class="ico ico-add" type="submit" title="Add"><svg><use href="#i-plus"/></svg></button>
     </form>
@@ -111,6 +120,17 @@
     </div>
   </div>
 
+  <!-- category popover -->
+  <div id="cat" class="pop" hidden>
+    <div class="pop-head">Category<button class="ico" data-act="catClose"><svg><use href="#i-x"/></svg></button></div>
+    <div class="cat-list" id="catList"></div>
+    <label class="pop-field"><span>New category</span><input id="catInput" type="text" maxlength="24" placeholder="e.g. Design" spellcheck="false" /></label>
+    <div class="pop-foot">
+      <button class="btn btn-ghost" data-act="catNone">Unsorted</button>
+      <button class="btn btn-primary" data-act="catSet">Set</button>
+    </div>
+  </div>
+
   <!-- embedded AI browser: tabs only, no address bar -->
   <div id="ai" class="ai" hidden>
     <header class="ai-head">
@@ -118,16 +138,23 @@
         <span class="ai-thumb" aria-hidden="true"></span>
         <button class="is-on" data-ai="chatgpt">ChatGPT</button>
         <button data-ai="claude">Claude</button>
+        <button data-ai="custom">Gmail</button>
+        <button data-ai="mail">Outlook</button>
       </div>
+      <div class="ai-toolbar" id="aiToolbar" hidden>
+        <button class="ico" data-act="toolBack" title="Back to chats"><svg><use href="#i-back"/></svg></button>
+        <span class="ai-tool-name" id="aiToolName"></span>
+      </div>
+      <button class="ico ico-ask" data-act="aiAsk" title="Ask about this screen — sends a screenshot with your prompt (Alt+Shift+A)"><svg><use href="#i-spark"/></svg></button>
       <button class="ico" data-act="aiPopout" title="Open in a real browser window (separate session — won't sign in this panel)"><svg><use href="#i-popout"/></svg></button>
       <button class="ico" data-act="aiReload" title="Reload"><svg><use href="#i-refresh"/></svg></button>
       <button class="ico" data-act="aiClose" title="Back to notes"><svg><use href="#i-x"/></svg></button>
     </header>
     <div class="ai-body" id="aiBody">
       <div class="ai-note" id="aiNote" hidden>
-        <span><b>Google sign-in only works in a real browser</b>, and that session stays there — it won't sign you in here. Go back and use your email address instead.</span>
+        <span><b id="aiNoteTitle"></b><span id="aiNoteBody"></span></span>
         <div class="ai-note-row">
-          <button class="ai-note-cta" data-act="aiBack">Back to sign-in</button>
+          <button class="ai-note-cta" id="aiNoteCta" data-act="aiBack"></button>
           <button class="ai-note-x" data-act="aiNoteClose" title="Dismiss"><svg><use href="#i-x"/></svg></button>
         </div>
       </div>
@@ -144,6 +171,7 @@
     <header class="sheet-head">
       <div class="sheet-seg">
         <button class="is-on" data-sheet="archive">Archive</button>
+        <button data-sheet="tools">Tools</button>
         <button data-sheet="settings">Settings</button>
       </div>
       <button class="ico" data-act="sheetClose" title="Close"><svg><use href="#i-x"/></svg></button>
@@ -155,6 +183,15 @@
         <div class="sheet-actions">
           <button class="btn btn-ghost" data-act="clearArchive">Clear archive</button>
         </div>
+      </section>
+
+      <section data-pane="tools" hidden>
+        <div class="tool-search">
+          <svg><use href="#i-search"/></svg>
+          <input id="toolSearch" type="text" placeholder="Search tools…" spellcheck="false" maxlength="60" />
+        </div>
+        <div id="toolList"></div>
+        <p class="tool-foot">Each tool opens inside Sidenote. Use <svg><use href="#i-pencil"/></svg> to point one at a different site.</p>
       </section>
 
       <section data-pane="settings" hidden>
@@ -193,6 +230,28 @@
         </div>
 
         <div class="set-group">
+          <div class="set-label">Web pane tabs</div>
+          <div class="set-sub">Tabs 3 and 4 are yours to point anywhere.</div>
+
+          <div class="slot">
+            <div class="slot-head">Custom tab</div>
+            <div class="slot-fields">
+              <input id="slotLabel" type="text" placeholder="Name" maxlength="18" spellcheck="false" />
+              <input id="slotUrl" type="text" placeholder="https://example.com" maxlength="400" spellcheck="false" />
+            </div>
+            <div class="slot-foot">
+              <span id="slotMsg"></span>
+              <button class="btn btn-primary" data-act="slotSave">Save</button>
+            </div>
+          </div>
+
+          <div class="slot">
+            <div class="slot-head">Mail tab</div>
+            <div class="cat-list" id="mailPick"></div>
+          </div>
+        </div>
+
+        <div class="set-group">
           <div class="set-label">Screens</div>
           <div class="set-row">
             <span id="screenInfo">1 display</span>
@@ -201,7 +260,7 @@
         </div>
 
         <div class="set-foot">
-          <span>Sidenote 1.1.0 · Alt+Shift+N</span>
+          <span>Sidenote 1.3.0 · Alt+Shift+N</span>
           <button class="btn btn-ghost btn-danger" data-act="quit">Quit</button>
         </div>
       </section>
@@ -214,6 +273,7 @@
   </div>
 </section>
 
+<script src="inject.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
