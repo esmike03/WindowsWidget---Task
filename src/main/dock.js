@@ -15,12 +15,13 @@ const TAB_W = 30;
 const TAB_H = 148;
 const GUTTER = 22;
 
-const ANIM_MS = 260;
+const ANIM_MS = 320;
 
 const COLLAPSED_W = TAB_W + GUTTER;
 const COLLAPSED_H = TAB_H + GUTTER * 2;
 
-const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const easeInOutQuint = (t) =>
+  t < 0.5 ? 16 * t * t * t * t * t : 1 - Math.pow(-2 * t + 2, 5) / 2;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 function displaysByPosition() {
@@ -169,10 +170,10 @@ class Dock {
     const start = Date.now();
     const lerp = (a, b, t) => Math.round(a + (b - a) * t);
 
-    this._anim = setInterval(() => {
+    const tick = () => {
       if (this.win.isDestroyed()) return this._stopAnim();
       const t = clamp((Date.now() - start) / duration, 0, 1);
-      const e = easeInOutCubic(t);
+      const e = easeInOutQuint(t);
       this.win.setBounds({
         x: lerp(from.x, target.x, e),
         y: lerp(from.y, target.y, e),
@@ -180,7 +181,9 @@ class Dock {
         height: lerp(from.height, target.height, e),
       });
       if (t >= 1) this._stopAnim();
-    }, 8);
+    };
+    this._anim = setInterval(tick, 16);
+    tick();
   }
 
   // ---- dragging ----------------------------------------------------------

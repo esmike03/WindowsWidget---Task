@@ -199,7 +199,7 @@ input {
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.14s ease, width 0.18s var(--ease);
+  transition: opacity 0.24s var(--ease), width 0.32s var(--ease), transform 0.32s var(--ease);
 }
 
 html.edge-right #tab {
@@ -216,7 +216,7 @@ html.edge-left #tab {
 html.collapsed #tab {
   opacity: 1;
   pointer-events: auto;
-  transition: opacity 0.18s ease 0.1s;
+  transition: opacity 0.26s var(--ease) 0.08s;
 }
 
 /* the one place a gradient reads as a highlight rather than a fill */
@@ -293,7 +293,7 @@ html.edge-left .tab-label {
   opacity: 1;
   /* width animates in step with the main-process window resize when the AI
      pane widens the panel */
-  transition: opacity 0.2s ease 0.07s, width 0.26s var(--ease);
+  transition: opacity 0.28s var(--ease), width 0.32s var(--ease);
 }
 
 html.edge-right #panel {
@@ -310,7 +310,7 @@ html.edge-left #panel {
 html.collapsed #panel {
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.1s ease;
+  transition: opacity 0.24s var(--ease);
 }
 
 /* faint inner top highlight — the "lit rim" of the glass */
@@ -1224,19 +1224,110 @@ html[data-theme='dark'] .sheet-seg button.is-on {
 
 /* ── tool launcher ───────────────────────────────────────────────────── */
 
-.tool-search {
+.tool-top {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0 6px;
+  background: var(--glass);
+  backdrop-filter: blur(24px) saturate(1.6);
+}
+.tool-search {
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 6px;
   height: 30px;
-  margin: 4px 0 6px;
   padding: 0 9px;
   border-radius: 9px;
   background: var(--surface-2);
   box-shadow: inset 0 0 0 1px var(--stroke);
+}
+.tool-add-btn {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--a1), var(--a2));
+  box-shadow: 0 4px 12px -6px color-mix(in srgb, var(--a1) 75%, transparent);
+}
+.tool-add-btn:hover {
+  filter: brightness(1.08);
+}
+.tool-add-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.tool-add {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  margin: 1px 0 8px;
+  padding: 9px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--stroke);
+  animation: pop 0.22s var(--ease);
+}
+.tool-add-head,
+.tool-add #toolAddUrl,
+.tool-add-foot {
+  grid-column: 1 / -1;
+}
+.tool-add-head {
+  padding: 0 1px 2px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--txt-2);
+}
+.tool-add input,
+.tool-edit-added input {
+  min-width: 0;
+  height: 27px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  background: var(--surface-h);
+  box-shadow: inset 0 0 0 1px var(--stroke);
+  user-select: text;
+  cursor: text;
+}
+html[data-theme='dark'] .tool-add input,
+html[data-theme='dark'] .tool-edit-added input {
+  background: var(--surface-2);
+}
+.tool-add input:focus,
+.tool-edit-added input:focus {
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+.tool-add-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 2px;
+  min-height: 27px;
+  font-size: var(--fs-nano);
+  font-weight: 600;
+  color: var(--txt-3);
+}
+.tool-add-foot span.is-bad {
+  color: var(--danger);
+}
+.tool-add-foot > div {
+  display: flex;
+  gap: 4px;
+}
+.tool-add-foot .btn {
+  height: 25px;
+  padding: 0 9px;
+  font-size: var(--fs-xs);
 }
 .tool-search svg {
   width: 13px;
@@ -1311,6 +1402,21 @@ html[data-theme='dark'] .sheet-seg button.is-on {
   background: var(--surface-h);
   color: var(--txt);
 }
+.tool-acts .tool-fav.is-on {
+  color: #e9a91b;
+  background: color-mix(in srgb, #e9a91b 12%, transparent);
+}
+.tool-row .tool-acts:has(.tool-fav.is-on) {
+  opacity: 1;
+}
+.tool-favorite-label {
+  color: color-mix(in srgb, #e9a91b 78%, var(--txt-3));
+}
+.tool-favorite-label svg {
+  width: 11px;
+  height: 11px;
+  fill: currentColor;
+}
 .tool-acts svg {
   width: 12px;
   height: 12px;
@@ -1322,6 +1428,19 @@ html[data-theme='dark'] .sheet-seg button.is-on {
   align-items: center;
   gap: 5px;
   padding: 5px 6px 8px 7px;
+}
+.tool-edit-added {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+}
+.tool-edit-added .tool-url-input {
+  grid-column: 1 / 3;
+}
+.tool-edit-added .btn {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  align-self: stretch;
+  height: auto;
 }
 .tool-edit input {
   flex: 1;
@@ -1567,13 +1686,21 @@ html[data-theme='dark'] .pick button.is-on {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  animation: aiIn 0.24s var(--ease);
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition: opacity 0.26s var(--ease), transform 0.32s var(--ease);
+  animation: aiIn 0.32s var(--ease);
 }
 @keyframes aiIn {
   from {
     opacity: 0;
     transform: translateY(6px);
   }
+}
+.ai.is-closing {
+  opacity: 0;
+  transform: translateY(5px) scale(0.992);
+  pointer-events: none;
 }
 html.ai-mode #seg,
 html.ai-mode #scroller,
@@ -1653,6 +1780,15 @@ html[data-theme='dark'] .ai-thumb {
   overflow: hidden;
   background: #ffffff;
   box-shadow: inset 0 0 0 1px var(--stroke);
+}
+.ai-body.is-switching {
+  animation: aiBodyIn 0.24s var(--ease);
+}
+@keyframes aiBodyIn {
+  from {
+    opacity: 0.35;
+    transform: scale(0.992);
+  }
 }
 html[data-theme='dark'] .ai-body {
   background: #1a1c24;

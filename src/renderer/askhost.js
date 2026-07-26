@@ -73,7 +73,7 @@ async function run({ id, prompt, target, image, url }) {
       /* not attached yet; the ready flag above already gated us */
     }
 
-    api.progress('Attaching the screenshot…');
+    api.progress(image ? 'Attaching the screenshot…' : 'Sending the prompt…');
     const script = window.SidenoteInject.buildAskScript({ target, prompt, image, budgetMs: 90_000 });
     const result = await view.executeJavaScript(script, true);
     reply(

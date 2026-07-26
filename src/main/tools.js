@@ -86,26 +86,61 @@ const isHttpUrl = (value) => {
   }
 };
 
-/** The catalogue with any user overrides applied. */
-function resolveTools(overrides) {
-  const map = overrides && typeof overrides === 'object' ? overrides : {};
-  return TOOLS.map((t) => {
-    const custom = isHttpUrl(map[t.id]) ? String(map[t.id]) : null;
-    return { ...t, url: custom || t.url, custom: !!custom, defaultUrl: t.url };
-  });
+/** Sanitise persisted user-added tools before they reach a webview allow-list. */
+function normalizeCustomTools(entries) {
+  if (!Array.isArray(entries)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const entry of entries) {
+    const id = String(entry?.id || '');
+    const label = String(entry?.label || '').trim().slice(0, 40);
+    const cat = String(entry?.cat || 'Custom').trim().slice(0, 24) || 'Custom';
+    const url = String(entry?.url || '').trim();
+    if (!id.startsWith('custom-') || seen.has(id) || !label || !isHttpUrl(url)) continue;
+    seen.add(id);
+    out.push({ id, label, cat, url });
+  }
+  return out;
 }
 
-function resolveToolUrl(id, overrides) {
+/** The catalogue with URL overrides, user additions and favourites applied. */
+function resolveTools(overrides, customTools, favorites) {
+  const map = overrides && typeof overrides === 'object' ? overrides : {};
+  const favoriteIds = new Set(Array.isArray(favorites) ? favorites.map(String) : []);
+  const builtIns = TOOLS.map((t) => {
+    const custom = isHttpUrl(map[t.id]) ? String(map[t.id]) : null;
+    return {
+      ...t,
+      url: custom || t.url,
+      custom: !!custom,
+      userAdded: false,
+      favorite: favoriteIds.has(t.id),
+      defaultUrl: t.url,
+    };
+  });
+  const added = normalizeCustomTools(customTools).map((t) => ({
+    ...t,
+    custom: false,
+    userAdded: true,
+    favorite: favoriteIds.has(t.id),
+    defaultUrl: t.url,
+  }));
+  return [...builtIns, ...added];
+}
+
+function resolveToolUrl(id, overrides, customTools) {
   const base = byId.get(id);
-  if (!base) return null;
-  const custom = overrides && overrides[id];
-  return isHttpUrl(custom) ? String(custom) : base.url;
+  if (base) {
+    const custom = overrides && overrides[id];
+    return isHttpUrl(custom) ? String(custom) : base.url;
+  }
+  return normalizeCustomTools(customTools).find((t) => t.id === id)?.url || null;
 }
 
 /** Origins a tool webview is allowed to attach to, defaults plus overrides. */
-function toolOrigins(overrides) {
+function toolOrigins(overrides, customTools) {
   const out = new Set();
-  for (const t of resolveTools(overrides)) {
+  for (const t of resolveTools(overrides, customTools)) {
     try {
       out.add(new URL(t.url).origin);
     } catch (_) {
@@ -120,4 +155,11 @@ function toolOrigins(overrides) {
   return out;
 }
 
-module.exports = { TOOLS, resolveTools, resolveToolUrl, toolOrigins, isHttpUrl };
+module.exports = {
+  TOOLS,
+  resolveTools,
+  resolveToolUrl,
+  toolOrigins,
+  isHttpUrl,
+  normalizeCustomTools,
+};

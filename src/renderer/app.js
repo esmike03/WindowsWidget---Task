@@ -57,6 +57,14 @@ const el = {
   aiToolName: $('#aiToolName'),
   toolList: $('#toolList'),
   toolSearch: $('#toolSearch'),
+  toolAdd: $('#toolAdd'),
+  toolAddButton: $('#toolAddButton'),
+  toolAddName: $('#toolAddName'),
+  toolAddUrl: $('#toolAddUrl'),
+  toolAddCat: $('#toolAddCat'),
+  toolAddMsg: $('#toolAddMsg'),
+  toolAddCancel: $('#toolAddCancel'),
+  toolAddSave: $('#toolAddSave'),
   slotLabel: $('#slotLabel'),
   slotUrl: $('#slotUrl'),
   slotMsg: $('#slotMsg'),
@@ -1325,6 +1333,7 @@ function cycleTheme() {
 /* ── embedded AI browser ─────────────────────────────────────────────── */
 
 const AI_PARTITION = 'persist:sidenote-ai';
+const PANE_ANIM_MS = 320;
 const aiViews = new Map(); // key -> <webview>
 let aiSites = {};
 let mailProviders = [];
@@ -1353,7 +1362,14 @@ function isGoogleOnly(key) {
   }
 }
 
-const aiOpen = () => !el.ai.hidden;
+let aiCloseTimer = null;
+const aiOpen = () => !el.ai.hidden && !el.ai.classList.contains('is-closing');
+
+function animateAiBody() {
+  el.aiBody.classList.remove('is-switching');
+  void el.aiBody.offsetWidth;
+  el.aiBody.classList.add('is-switching');
+}
 
 /**
  * Google blocks sign-in inside embedded browser frameworks. Which advice is
@@ -1448,6 +1464,7 @@ function setAiTab(key) {
   hideAiState();
   el.aiNote.hidden = true;
   const view = ensureAiView(key);
+  animateAiBody();
   aiViews.forEach((v, k) => {
     v.hidden = k !== key;
   });
@@ -1467,9 +1484,12 @@ function setAiTab(key) {
 
 /** `skipTab` opens the pane without booting a chat site — used by the tools. */
 function openAiPane({ skipTab = false } = {}) {
+  clearTimeout(aiCloseTimer);
+  aiCloseTimer = null;
   if (!el.pop.hidden) closeWhen();
   if (!el.sheet.hidden) closeSheet();
   el.ai.hidden = false;
+  el.ai.classList.remove('is-closing');
   el.html.classList.add('ai-mode');
   $('[data-act="ai"]').classList.add('is-on');
   if (!skipTab) setAiTab(aiTab);
@@ -1477,15 +1497,22 @@ function openAiPane({ skipTab = false } = {}) {
 }
 
 function closeAiPane() {
-  el.ai.hidden = true;
-  el.html.classList.remove('ai-mode');
+  if (el.ai.hidden || el.ai.classList.contains('is-closing')) return;
+  el.ai.classList.add('is-closing');
   $('[data-act="ai"]').classList.remove('is-on');
-  // Next open should start on the chat tabs, not a stale tool.
-  activeTool = null;
-  el.aiSeg.hidden = false;
-  el.aiToolbar.hidden = true;
-  if (toolView) toolView.hidden = true;
   api.ai.setOpen(false);
+  clearTimeout(aiCloseTimer);
+  aiCloseTimer = setTimeout(() => {
+    el.ai.hidden = true;
+    el.ai.classList.remove('is-closing');
+    el.html.classList.remove('ai-mode');
+    // Next open should start on the chat tabs, not a stale tool.
+    activeTool = null;
+    el.aiSeg.hidden = false;
+    el.aiToolbar.hidden = true;
+    if (toolView) toolView.hidden = true;
+    aiCloseTimer = null;
+  }, PANE_ANIM_MS);
 }
 
 const toggleAiPane = () => (aiOpen() ? closeAiPane() : openAiPane());
@@ -1546,36 +1573,55 @@ function renderTools() {
     return;
   }
 
-  let html = '';
-  let cat = null;
-  for (const t of list) {
-    if (t.cat !== cat) {
-      cat = t.cat;
-      html += `<div class="group-label">${esc(cat)}</div>`;
-    }
-    html += `<div class="tool-row${t.custom ? ' is-custom' : ''}" data-tool="${esc(t.id)}">
+  const rowHtml = (t) => {
+    const editHtml =
+      toolEditing === t.id
+        ? t.userAdded
+          ? `<div class="tool-edit tool-edit-added" data-tool="${esc(t.id)}">
+              <input class="tool-name-input" type="text" value="${esc(t.label)}" placeholder="Tool name" maxlength="40" spellcheck="false" />
+              <input class="tool-cat-input" type="text" value="${esc(t.cat)}" placeholder="Category" maxlength="24" spellcheck="false" />
+              <input class="tool-url-input" type="text" value="${esc(t.url)}" placeholder="https://example.com" maxlength="400" spellcheck="false" />
+              <button class="btn btn-primary" data-act="toolSave">Save</button>
+            </div>`
+          : `<div class="tool-edit" data-tool="${esc(t.id)}">
+              <input class="tool-url-input" type="text" value="${esc(t.url)}" spellcheck="false"
+                     placeholder="https://example.com" maxlength="400" />
+              <button class="btn btn-primary" data-act="toolSave">Save</button>
+            </div>`
+        : '';
+    return `<div class="tool-row${t.custom || t.userAdded ? ' is-custom' : ''}" data-tool="${esc(t.id)}">
       <div class="body">
         <div class="tool-name">${esc(t.label)}</div>
         <div class="tool-url">${esc(prettyUrl(t.url))}</div>
       </div>
       <div class="tool-acts">
-        <button data-act="toolEdit" title="Change the site this opens">${ICON('i-pencil')}</button>
-        ${t.custom ? `<button data-act="toolReset" title="Restore the default">${ICON('i-undo')}</button>` : ''}
+        <button class="tool-fav${t.favorite ? ' is-on' : ''}" data-act="toolFavorite" title="${t.favorite ? 'Remove from favourites' : 'Add to favourites'}">${ICON('i-star')}</button>
+        <button data-act="toolEdit" title="${t.userAdded ? 'Edit this tool' : 'Change the site this opens'}">${ICON('i-pencil')}</button>
+        ${t.custom && !t.userAdded ? `<button data-act="toolReset" title="Restore the default">${ICON('i-undo')}</button>` : ''}
+        ${t.userAdded ? `<button data-act="toolDelete" title="Delete this custom tool">${ICON('i-trash')}</button>` : ''}
       </div>
-    </div>`;
+    </div>${editHtml}`;
+  };
 
-    if (toolEditing === t.id) {
-      html += `<div class="tool-edit" data-tool="${esc(t.id)}">
-        <input class="tool-url-input" type="text" value="${esc(t.url)}" spellcheck="false"
-               placeholder="https://example.com" maxlength="400" />
-        <button class="btn btn-primary" data-act="toolSave">Save</button>
-      </div>`;
-    }
+  let html = '';
+  const favorites = list.filter((t) => t.favorite);
+  if (favorites.length) {
+    html += `<div class="group-label tool-favorite-label">${ICON('i-star')}Favorites</div>`;
+    html += favorites.map(rowHtml).join('');
+  }
+  const grouped = new Map();
+  for (const t of list.filter((tool) => !tool.favorite)) {
+    if (!grouped.has(t.cat)) grouped.set(t.cat, []);
+    grouped.get(t.cat).push(t);
+  }
+  for (const [cat, entries] of grouped) {
+    html += `<div class="group-label">${esc(cat)}</div>`;
+    html += entries.map(rowHtml).join('');
   }
   el.toolList.innerHTML = html;
 
   if (toolEditing) {
-    const input = $('.tool-url-input', el.toolList);
+    const input = $('.tool-name-input', el.toolList) || $('.tool-url-input', el.toolList);
     if (input) {
       input.focus();
       input.select();
@@ -1637,7 +1683,9 @@ function openTool(id) {
   aiViews.forEach((v) => {
     v.hidden = true;
   });
+  const createdView = !toolView;
   const view = ensureToolView(tool.url);
+  animateAiBody();
   view.hidden = false;
   showAiState(`Loading ${tool.label}…`);
 
@@ -1647,7 +1695,7 @@ function openTool(id) {
   } catch (_) {
     current = '';
   }
-  if (current && current !== tool.url) view.loadURL(tool.url);
+  if (!createdView && current !== tool.url) view.loadURL(tool.url);
 }
 
 /** Leave tool mode and put the chat tabs back. */
@@ -1672,6 +1720,12 @@ el.toolList.addEventListener('click', async (e) => {
   const id = row.dataset.tool;
   const act = e.target.closest('[data-act]')?.dataset.act;
 
+  if (act === 'toolFavorite') {
+    const tool = tools.find((t) => t.id === id);
+    const res = await api.tools.favorite(id, !tool?.favorite);
+    if (res?.ok) tools = res.tools;
+    return renderTools();
+  }
   if (act === 'toolEdit') {
     toolEditing = toolEditing === id ? null : id;
     return renderTools();
@@ -1682,9 +1736,26 @@ el.toolList.addEventListener('click', async (e) => {
     toolEditing = null;
     return renderTools();
   }
+  if (act === 'toolDelete') {
+    const res = await api.tools.remove(id);
+    if (res?.ok) {
+      tools = res.tools;
+      toolEditing = null;
+      if (activeTool?.id === id) closeTool();
+      return renderTools();
+    }
+    return showToast(res?.error || 'Could not delete that tool', null);
+  }
   if (act === 'toolSave') {
-    const input = $('.tool-url-input', row.closest('.tool-edit') || el.toolList);
-    const res = await api.tools.setUrl(id, input ? input.value : '');
+    const wrap = row.classList.contains('tool-edit') ? row : row.closest('.tool-edit');
+    const tool = tools.find((t) => t.id === id);
+    const res = tool?.userAdded
+      ? await api.tools.update(id, {
+          label: $('.tool-name-input', wrap)?.value,
+          cat: $('.tool-cat-input', wrap)?.value,
+          url: $('.tool-url-input', wrap)?.value,
+        })
+      : await api.tools.setUrl(id, $('.tool-url-input', wrap)?.value || '');
     if (res?.ok) {
       tools = res.tools;
       toolEditing = null;
@@ -1698,7 +1769,7 @@ el.toolList.addEventListener('click', async (e) => {
 });
 
 el.toolList.addEventListener('keydown', (e) => {
-  if (!e.target.classList.contains('tool-url-input')) return;
+  if (!e.target.closest('.tool-edit')) return;
   if (e.key === 'Enter') {
     e.preventDefault();
     const wrap = e.target.closest('.tool-edit');
@@ -1707,6 +1778,53 @@ el.toolList.addEventListener('keydown', (e) => {
     e.preventDefault();
     toolEditing = null;
     renderTools();
+  }
+});
+
+function closeToolAdd() {
+  el.toolAdd.hidden = true;
+  el.toolAddMsg.textContent = '';
+  el.toolAddMsg.classList.remove('is-bad');
+}
+
+el.toolAddButton.addEventListener('click', () => {
+  const opening = el.toolAdd.hidden;
+  if (!opening) return closeToolAdd();
+  el.toolAdd.hidden = false;
+  el.toolAddMsg.textContent = '';
+  el.toolAddName.focus();
+});
+
+el.toolAddCancel.addEventListener('click', closeToolAdd);
+
+el.toolAddSave.addEventListener('click', async () => {
+  const res = await api.tools.add({
+    label: el.toolAddName.value,
+    url: el.toolAddUrl.value,
+    cat: el.toolAddCat.value,
+  });
+  if (!res?.ok) {
+    el.toolAddMsg.textContent = res?.error || 'Could not add that tool';
+    el.toolAddMsg.classList.add('is-bad');
+    return;
+  }
+  tools = res.tools;
+  el.toolAddName.value = '';
+  el.toolAddUrl.value = '';
+  el.toolAddCat.value = '';
+  toolFilter = '';
+  el.toolSearch.value = '';
+  closeToolAdd();
+  renderTools();
+});
+
+el.toolAdd.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    el.toolAddSave.click();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    closeToolAdd();
   }
 });
 

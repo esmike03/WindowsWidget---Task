@@ -44,8 +44,11 @@ const DEFAULT_SETTINGS = {
   paneCustom: { label: 'Gmail', url: 'https://mail.google.com/mail/u/0/' },
   paneMail: 'outlook', // id from MAIL_PROVIDERS
   askTarget: 'chatgpt', // which site the floating Ask bar drives
+  askIncludeScreenshot: false, // opt-in: attach a full-screen capture to Ask prompts
   askBounds: null, // remembered position of the Ask bar
   toolUrls: {}, // per-tool URL overrides, keyed by tool id
+  customTools: [], // user-added web tools
+  favoriteTools: [], // tool ids pinned to the top of the launcher
 };
 
 // The two chat tabs are fixed; the remaining two are user-configurable slots.
@@ -89,7 +92,8 @@ function paneSites() {
 
 /** Origins any pane webview may attach to: fixed sites, both slots, all tools. */
 function paneOrigins() {
-  const out = toolOrigins(settings.get().toolUrls);
+  const s = settings.get();
+  const out = toolOrigins(s.toolUrls, s.customTools);
   for (const site of Object.values(paneSites())) {
     try {
       out.add(new URL(site.url).origin);
@@ -98,6 +102,19 @@ function paneOrigins() {
     }
   }
   return out;
+}
+
+function currentTools() {
+  const s = settings.get();
+  return resolveTools(s.toolUrls, s.customTools, s.favoriteTools);
+}
+
+function cleanHttpUrl(value) {
+  const clean = String(value || '').trim();
+  if (!clean) return null;
+  if (isHttpUrl(clean)) return clean;
+  const withScheme = `https://${clean}`;
+  return isHttpUrl(withScheme) ? withScheme : null;
 }
 // Changing this string would orphan every session the user has already signed in.
 const AI_PARTITION = 'persist:sidenote-ai';
@@ -393,6 +410,9 @@ function buildTray() {
 
 function notifyRenderer() {
   if (win && !win.isDestroyed()) win.webContents.send('settings:changed', settings.get());
+  if (ask && ask.win && !ask.win.isDestroyed()) {
+    ask.win.webContents.send('settings:changed', settings.get());
+  }
 }
 
 function refreshTrayMenu() {
@@ -530,6 +550,7 @@ function registerIpc() {
     if ('alwaysOnTop' in patch) applyAlwaysOnTop();
     if ('startWithWindows' in patch) applyLoginItem(patch.startWithWindows);
     if ('edge' in patch && patch.edge !== before.edge) dock.layout({ animate: true });
+    notifyRenderer();
     refreshTrayMenu();
     return { ...next, startWithWindows: loginItemEnabled() };
   });
@@ -557,22 +578,85 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle('tools:list', () => resolveTools(settings.get().toolUrls));
+  ipcMain.handle('tools:list', () => currentTools());
 
   /** An empty or invalid URL clears the override and restores the default. */
   ipcMain.handle('tools:setUrl', (_e, id, url) => {
+    const existing = currentTools().find((t) => t.id === id);
+    if (!existing || existing.userAdded) {
+      return { ok: false, error: 'That built-in tool does not exist.' };
+    }
     const next = { ...(settings.get().toolUrls || {}) };
     const clean = String(url || '').trim();
     if (!clean) delete next[id];
-    else if (isHttpUrl(clean)) next[id] = clean;
-    else if (isHttpUrl(`https://${clean}`)) next[id] = `https://${clean}`;
-    else return { ok: false, error: 'That is not a valid web address.' };
+    else {
+      const resolved = cleanHttpUrl(clean);
+      if (!resolved) return { ok: false, error: 'That is not a valid web address.' };
+      next[id] = resolved;
+    }
 
     settingsStore.set({ toolUrls: next });
-    return { ok: true, tools: resolveTools(next) };
+    return { ok: true, tools: currentTools() };
   });
 
-  ipcMain.handle('tools:url', (_e, id) => resolveToolUrl(id, settings.get().toolUrls));
+  ipcMain.handle('tools:url', (_e, id) => {
+    const s = settings.get();
+    return resolveToolUrl(id, s.toolUrls, s.customTools);
+  });
+
+  ipcMain.handle('tools:add', (_e, payload) => {
+    const label = String(payload?.label || '').trim().slice(0, 40);
+    const cat = String(payload?.cat || 'Custom').trim().slice(0, 24) || 'Custom';
+    const url = cleanHttpUrl(payload?.url);
+    if (!label) return { ok: false, error: 'Give the tool a name.' };
+    if (!url) return { ok: false, error: 'That is not a valid web address.' };
+
+    const current = Array.isArray(settings.get().customTools) ? settings.get().customTools : [];
+    if (current.length >= 100) return { ok: false, error: 'The custom-tool limit is 100.' };
+    const id = `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    settingsStore.set({ customTools: [...current, { id, label, cat, url }] });
+    return { ok: true, tools: currentTools(), id };
+  });
+
+  ipcMain.handle('tools:update', (_e, id, payload) => {
+    const current = Array.isArray(settings.get().customTools) ? settings.get().customTools : [];
+    const index = current.findIndex((t) => t.id === id);
+    if (index < 0) return { ok: false, error: 'That custom tool no longer exists.' };
+    const label = String(payload?.label || '').trim().slice(0, 40);
+    const cat = String(payload?.cat || 'Custom').trim().slice(0, 24) || 'Custom';
+    const url = cleanHttpUrl(payload?.url);
+    if (!label) return { ok: false, error: 'Give the tool a name.' };
+    if (!url) return { ok: false, error: 'That is not a valid web address.' };
+
+    const next = current.slice();
+    next[index] = { id, label, cat, url };
+    settingsStore.set({ customTools: next });
+    return { ok: true, tools: currentTools() };
+  });
+
+  ipcMain.handle('tools:remove', (_e, id) => {
+    const current = Array.isArray(settings.get().customTools) ? settings.get().customTools : [];
+    if (!current.some((t) => t.id === id)) {
+      return { ok: false, error: 'Only user-added tools can be removed.' };
+    }
+    const favorites = (settings.get().favoriteTools || []).filter((toolId) => toolId !== id);
+    settingsStore.set({
+      customTools: current.filter((t) => t.id !== id),
+      favoriteTools: favorites,
+    });
+    return { ok: true, tools: currentTools() };
+  });
+
+  ipcMain.handle('tools:favorite', (_e, id, favorite) => {
+    if (!currentTools().some((t) => t.id === id)) {
+      return { ok: false, error: 'That tool no longer exists.' };
+    }
+    const set = new Set((settings.get().favoriteTools || []).map(String));
+    if (favorite) set.add(id);
+    else set.delete(id);
+    settingsStore.set({ favoriteTools: Array.from(set) });
+    return { ok: true, tools: currentTools() };
+  });
 
   ipcMain.handle('ai:sites', () => paneSites());
   ipcMain.handle('ai:providers', () => MAIL_PROVIDERS);

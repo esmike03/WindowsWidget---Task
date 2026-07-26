@@ -15,8 +15,10 @@ contextBridge.exposeInMainWorld('ask', {
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
     set: (patch) => ipcRenderer.invoke('settings:set', patch),
+    onChange: (fn) => on('settings:changed', fn),
   },
   onFocus: (fn) => on('ask:focus', fn),
   onStatus: (fn) => on('ask:status', fn),
+  onLayout: (fn) => on('ask:layout', fn),
   onTheme: (fn) => on('theme:changed', fn),
 });

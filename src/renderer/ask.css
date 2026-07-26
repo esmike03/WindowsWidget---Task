@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════
    Sidenote — floating Ask bar
-   Shares the panel's glass language, sized for a single line of input.
+   Compact input bar with a detached, direction-aware reply bubble.
    ═══════════════════════════════════════════════════════════════════════ */
 
 @font-face {
@@ -135,41 +135,40 @@ input {
   height: 100%;
   display: flex;
   flex-direction: column;
-  border-radius: var(--r);
-  overflow: hidden;
-  background: var(--glass);
-  backdrop-filter: blur(26px) saturate(1.7);
-  box-shadow: var(--shadow);
+  gap: 8px;
+  overflow: visible;
+  background: transparent;
+}
+html[data-layout='above'] #shell {
+  flex-direction: column-reverse;
 }
 #shell::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 10%;
-  right: 10%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--stroke-hi), transparent);
-  pointer-events: none;
-  z-index: 5;
+  display: none;
 }
 
 /* ── bar ─────────────────────────────────────────────────────────────── */
 
 #bar {
+  position: relative;
   flex: none;
-  height: 58px;
+  height: 48px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 8px 0 4px;
+  gap: 5px;
+  padding: 0 7px 0 3px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--glass);
+  backdrop-filter: blur(26px) saturate(1.7);
+  box-shadow: var(--shadow);
   /* the whole strip is a drag handle; controls opt out via .no-drag */
   -webkit-app-region: drag;
 }
 
 #grip {
   flex: none;
-  width: 18px;
-  height: 30px;
+  width: 15px;
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -192,17 +191,17 @@ input {
   flex: none;
   display: flex;
   gap: 2px;
-  padding: 3px;
-  border-radius: 9px;
+  padding: 2px;
+  border-radius: 8px;
   background: var(--surface-2);
   -webkit-app-region: no-drag;
 }
 .target-thumb {
   position: absolute;
-  top: 3px;
-  left: 3px;
-  width: calc((100% - 8px) / 2);
-  height: calc(100% - 6px);
+  top: 2px;
+  left: 2px;
+  width: calc((100% - 6px) / 2);
+  height: calc(100% - 4px);
   border-radius: 6px;
   background: var(--surface-h);
   box-shadow: 0 1px 2px rgba(16, 20, 38, 0.08), inset 0 0 0 1px var(--stroke);
@@ -217,9 +216,9 @@ html[data-theme='dark'] .target-thumb {
 }
 .target button {
   position: relative;
-  min-width: 46px;
-  height: 22px;
-  padding: 0 7px;
+  min-width: 42px;
+  height: 20px;
+  padding: 0 6px;
   border-radius: 6px;
   font-size: var(--fs-xs);
   font-weight: 700;
@@ -233,9 +232,9 @@ html[data-theme='dark'] .target-thumb {
 #prompt {
   flex: 1;
   min-width: 0;
-  height: 34px;
-  padding: 0 4px;
-  font-size: var(--fs-md);
+  height: 30px;
+  padding: 0 3px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   user-select: text;
   cursor: text;
@@ -246,9 +245,9 @@ html[data-theme='dark'] .target-thumb {
 
 .ico {
   flex: none;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 27px;
+  height: 27px;
+  border-radius: 7px;
   color: var(--txt-3);
   transition: background 0.16s, color 0.16s, transform 0.16s var(--ease);
 }
@@ -283,13 +282,26 @@ html[data-theme='dark'] .target-thumb {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-top: 1px solid var(--stroke);
+  overflow: hidden;
+  border-radius: 13px;
+  background: var(--glass);
+  backdrop-filter: blur(26px) saturate(1.7);
+  box-shadow: var(--shadow);
   animation: outIn 0.22s var(--ease);
 }
 @keyframes outIn {
   from {
     opacity: 0;
     transform: translateY(-4px);
+  }
+}
+html[data-layout='above'] #out {
+  animation-name: outInAbove;
+}
+@keyframes outInAbove {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
   }
 }
 
@@ -353,38 +365,6 @@ html[data-theme='dark'] .target-thumb {
 #out.is-error .answer {
   color: var(--txt-2);
   font-weight: 500;
-}
-
-/* Collapsed just means a shorter scroll viewport — the window height does the
-   truncating. A line-clamp here would fight `flex:1` + `overflow-y:auto` and
-   leave the text scrolled into empty space. The fade signals there is more. */
-.answer.is-clamped {
-  overflow: hidden;
-  mask-image: linear-gradient(180deg, #000 66%, transparent 100%);
-}
-
-#more {
-  flex: none;
-  height: 28px;
-  margin: 0 10px 8px;
-  border-radius: 8px;
-  font-size: var(--fs-xs);
-  font-weight: 700;
-  color: var(--txt-2);
-  background: var(--surface-2);
-  transition: all 0.16s;
-}
-#more:hover {
-  color: var(--txt);
-  background: var(--surface-h);
-}
-#more svg {
-  width: 12px;
-  height: 12px;
-  transition: transform 0.2s var(--ease);
-}
-#more.is-open svg {
-  transform: rotate(180deg);
 }
 
 ::-webkit-scrollbar {

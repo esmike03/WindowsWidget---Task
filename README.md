@@ -41,6 +41,11 @@ alphabetically with `Unsorted` last. Clicking a row opens it in your **real brow
 never inside the widget. Each row gets a letter chip tinted from its hostname — a
 stand-in for a favicon, since fetching real ones would mean a network request per row.
 
+**Tools** — a searchable catalogue of web utilities for images, PDFs, documents,
+media, codes and development. Star any tool to pin it under **Favorites**, change a
+built-in tool's destination, or add your own named URL and category. User-added tools
+can be edited or removed later.
+
 **Completing** — click the circle. The title strikes through in place, then after a
 beat the item retires to the **Archive** (or is deleted outright, if you prefer —
 Settings → *On complete*). An **Undo** toast is offered for 5 seconds. Clicking the
@@ -52,8 +57,8 @@ circle again during the strike-through also undoes it.
 
 **Web pane** — the apps button in the header (left of the monitor button) swaps the
 list for an embedded browser. No address bar, no search bar — just the site. The panel
-widens from 344px to 520px while it's open and snaps back when you close it (`Esc` or
-the ✕). Four tabs:
+smoothly widens from 344px to 520px while it's open and eases back when you close it
+(`Esc` or the ✕). Four tabs:
 
 | Tab | What it is |
 | --- | --- |
@@ -66,10 +71,14 @@ tab and drops the old view, so the next visit loads the new address rather than 
 previous tenant.
 
 The ✦ button in the pane header opens the **Ask bar** — a floating, draggable field
-that captures the screen you're looking at, sends it with your prompt to ChatGPT or
-Claude, and shows the reply in place (truncated, with *Show more* and a copy button).
-`Alt+Shift+A` summons it from anywhere, and it's in the tray menu too. Both Sidenote
-windows hide themselves for the capture, so neither ends up in the screenshot.
+that sends your prompt to ChatGPT or Claude and shows the complete reply in a
+scrollable chat bubble with a copy button. The bubble automatically opens above
+or below the compact input bar, whichever keeps it on-screen. Screen capture is
+**off by default**; enable
+Settings → *Include screen capture in Ask* to attach a full screenshot to each prompt.
+`Alt+Shift+A` summons the bar from anywhere, and it's in the tray menu too. When
+capture is enabled, both Sidenote windows hide themselves first, so neither ends up
+in the screenshot.
 
 - All four tabs share one persistent session, so you sign in once and stay signed in.
 - Sign-in popups (Google, Apple, magic links) open in a normal window on that same

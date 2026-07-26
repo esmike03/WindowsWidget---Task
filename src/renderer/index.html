@@ -37,6 +37,7 @@
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8L20.5 20.5"/></symbol>
     <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
     <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M15.6 8.4a3.9 3.9 0 0 1-4.9 4.9L5.6 18.4a1.9 1.9 0 0 1-2.7-2.7l5.1-5.1a3.9 3.9 0 0 1 4.9-4.9l-2.4 2.4 2.1 2.1 2.4-2.4a3.9 3.9 0 0 1 .6.6z"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z"/></symbol>
   </defs>
 </svg>
 
@@ -145,7 +146,7 @@
         <button class="ico" data-act="toolBack" title="Back to chats"><svg><use href="#i-back"/></svg></button>
         <span class="ai-tool-name" id="aiToolName"></span>
       </div>
-      <button class="ico ico-ask" data-act="aiAsk" title="Ask about this screen — sends a screenshot with your prompt (Alt+Shift+A)"><svg><use href="#i-spark"/></svg></button>
+      <button class="ico ico-ask" data-act="aiAsk" title="Open Ask bar (Alt+Shift+A)"><svg><use href="#i-spark"/></svg></button>
       <button class="ico" data-act="aiPopout" title="Open in a real browser window (separate session — won't sign in this panel)"><svg><use href="#i-popout"/></svg></button>
       <button class="ico" data-act="aiReload" title="Reload"><svg><use href="#i-refresh"/></svg></button>
       <button class="ico" data-act="aiClose" title="Back to notes"><svg><use href="#i-x"/></svg></button>
@@ -186,12 +187,28 @@
       </section>
 
       <section data-pane="tools" hidden>
-        <div class="tool-search">
-          <svg><use href="#i-search"/></svg>
-          <input id="toolSearch" type="text" placeholder="Search tools…" spellcheck="false" maxlength="60" />
+        <div class="tool-top">
+          <div class="tool-search">
+            <svg><use href="#i-search"/></svg>
+            <input id="toolSearch" type="text" placeholder="Search tools…" spellcheck="false" maxlength="60" />
+          </div>
+          <button class="tool-add-btn" id="toolAddButton" type="button" title="Add a custom tool"><svg><use href="#i-plus"/></svg></button>
+        </div>
+        <div class="tool-add" id="toolAdd" hidden>
+          <div class="tool-add-head">Add a tool</div>
+          <input id="toolAddName" type="text" placeholder="Tool name" maxlength="40" spellcheck="false" />
+          <input id="toolAddUrl" type="text" placeholder="https://example.com" maxlength="400" spellcheck="false" />
+          <input id="toolAddCat" type="text" placeholder="Category (optional)" maxlength="24" spellcheck="false" />
+          <div class="tool-add-foot">
+            <span id="toolAddMsg"></span>
+            <div>
+              <button class="btn btn-ghost" id="toolAddCancel" type="button">Cancel</button>
+              <button class="btn btn-primary" id="toolAddSave" type="button">Add</button>
+            </div>
+          </div>
         </div>
         <div id="toolList"></div>
-        <p class="tool-foot">Each tool opens inside Sidenote. Use <svg><use href="#i-pencil"/></svg> to point one at a different site.</p>
+        <p class="tool-foot">Star favourites to pin them above the catalogue. Add your own web tools with <svg><use href="#i-plus"/></svg>.</p>
       </section>
 
       <section data-pane="settings" hidden>
@@ -227,6 +244,7 @@
           <label class="set-row set-toggle"><span>Always on top</span><input type="checkbox" data-toggle="alwaysOnTop" /><i></i></label>
           <label class="set-row set-toggle"><span>Collapse when unfocused</span><input type="checkbox" data-toggle="autoCollapse" /><i></i></label>
           <label class="set-row set-toggle"><span>Event reminders</span><input type="checkbox" data-toggle="reminders" /><i></i></label>
+          <label class="set-row set-toggle" title="When enabled, each Ask prompt includes a full screenshot of the display containing the Ask bar."><span>Include screen capture in Ask</span><input type="checkbox" data-toggle="askIncludeScreenshot" /><i></i></label>
         </div>
 
         <div class="set-group">

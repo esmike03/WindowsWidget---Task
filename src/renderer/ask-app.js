@@ -19,19 +19,18 @@ const el = {
   outIcon: $('#outIcon'),
   status: $('#status'),
   answer: $('#answer'),
-  more: $('#more'),
   copy: $('#copy'),
   clear: $('#clear'),
 };
 
-const BAR_H = 58;
-const MAX_H = 520;
-const CLAMP_H = 190; // collapsed answer height
+const BAR_H = 48;
+const MAX_H = 480;
+const BUBBLE_GAP = 8;
 
 let target = 'chatgpt';
+let includeScreenshot = false;
 let busy = false;
 let fullText = '';
-let expanded = false;
 
 /* ── layout ──────────────────────────────────────────────────────────── */
 
@@ -39,27 +38,17 @@ let expanded = false;
 function fit() {
   if (el.out.hidden) return api.resize(BAR_H);
   const head = 32;
-  const moreH = el.more.hidden ? 0 : 36;
-  const room = MAX_H - BAR_H - head - moreH;
-  // Collapsed shows a short viewport; expanded grows to the content, capped.
+  const room = MAX_H - BAR_H - BUBBLE_GAP - head;
   const content = Math.min(room, el.answer.scrollHeight + 12);
-  const body = expanded ? content : Math.min(CLAMP_H, content);
-  api.resize(BAR_H + head + body + moreH);
+  api.resize(BAR_H + BUBBLE_GAP + head + content);
 }
 
-/** Single place that renders `expanded`, so the label can never disagree with it. */
-function renderMore() {
-  el.answer.classList.toggle('is-clamped', !expanded && !el.more.hidden);
-  el.more.classList.toggle('is-open', expanded);
-  $('#more span').textContent = expanded ? 'Show less' : 'Show more';
-  fit();
-}
-
-function showOut({ status, text, error, working }) {
+function showOut({ status, text, error, working, capture = includeScreenshot }) {
   el.out.hidden = false;
   el.out.classList.toggle('is-error', !!error);
   el.spin.hidden = !working;
   el.outIcon.hidden = !!working;
+  el.outIcon.querySelector('use').setAttribute('href', capture ? '#a-camera' : '#a-spark');
   el.status.textContent = status;
   el.copy.hidden = !text;
 
@@ -67,18 +56,8 @@ function showOut({ status, text, error, working }) {
   el.answer.textContent = fullText;
   el.answer.scrollTop = 0;
 
-  // Every new answer starts collapsed, whatever the last one was left as.
-  expanded = false;
-  el.more.hidden = false;
-  el.more.blur();
-  renderMore();
-
-  // Measure once laid out: only offer the toggle if there is more to see.
-  requestAnimationFrame(() => {
-    const overflows = el.answer.scrollHeight > CLAMP_H - 12;
-    el.more.hidden = !overflows;
-    renderMore();
-  });
+  // The bubble uses all available screen space; longer replies scroll inside it.
+  fit();
 }
 
 function hideOut() {
@@ -96,12 +75,25 @@ function setBusy(on) {
   el.prompt.disabled = on;
 }
 
+function renderCapturePreference() {
+  el.prompt.placeholder = includeScreenshot ? 'Ask about this screen…' : 'Ask ChatGPT or Claude…';
+  el.send.title = includeScreenshot
+    ? 'Capture this screen and send (Enter)'
+    : 'Send prompt (Enter)';
+}
+
 async function submit() {
   const text = el.prompt.value.trim();
   if (!text || busy) return;
 
+  const capture = includeScreenshot;
   setBusy(true);
-  showOut({ status: 'Capturing this screen…', working: true, text: '' });
+  showOut({
+    status: capture ? 'Capturing this screen…' : 'Sending prompt…',
+    working: true,
+    text: '',
+    capture,
+  });
 
   let res;
   try {
@@ -113,12 +105,13 @@ async function submit() {
 
   if (res && res.ok) {
     const label = target === 'claude' ? 'Claude' : 'ChatGPT';
-    showOut({ status: label, text: res.text });
+    showOut({ status: label, text: res.text, capture });
     el.prompt.value = '';
   } else {
     showOut({
       status: 'Failed',
       error: (res && res.error) || 'Something went wrong.',
+      capture,
     });
   }
   el.prompt.focus();
@@ -143,11 +136,6 @@ el.target.addEventListener('click', (e) => {
   document.querySelectorAll('[data-target]').forEach((b) => b.classList.toggle('is-on', b.dataset.target === target));
   api.settings.set({ askTarget: target });
   el.prompt.focus();
-});
-
-el.more.addEventListener('click', () => {
-  expanded = !expanded;
-  renderMore();
 });
 
 el.copy.addEventListener('click', async () => {
@@ -183,8 +171,17 @@ api.onStatus((text) => {
   if (busy) el.status.textContent = text;
 });
 
+api.onLayout(({ direction }) => {
+  el.html.dataset.layout = direction === 'above' ? 'above' : 'below';
+});
+
 api.onTheme(({ resolved }) => {
   el.html.dataset.theme = resolved;
+});
+
+api.settings.onChange((next) => {
+  includeScreenshot = !!next.askIncludeScreenshot;
+  renderCapturePreference();
 });
 
 /* ── boot ────────────────────────────────────────────────────────────── */
@@ -193,12 +190,14 @@ api.onTheme(({ resolved }) => {
   try {
     const s = await api.settings.get();
     if (s.askTarget === 'claude' || s.askTarget === 'chatgpt') target = s.askTarget;
+    includeScreenshot = !!s.askIncludeScreenshot;
     el.target.dataset.on = target;
     document.querySelectorAll('[data-target]').forEach((b) => b.classList.toggle('is-on', b.dataset.target === target));
     el.html.dataset.theme = s.theme === 'dark' ? 'dark' : s.theme === 'light' ? 'light' : el.html.dataset.theme;
   } catch (_) {
     /* defaults are fine */
   }
+  renderCapturePreference();
   fit();
   el.prompt.focus();
 })();

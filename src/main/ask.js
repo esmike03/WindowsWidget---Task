@@ -5,9 +5,9 @@ const path = require('path');
 
 // The bar is a separate always-on-top window so it can sit over anything the
 // user is looking at, on any monitor, independent of where the panel is docked.
-const BAR_W = 452;
-const BAR_H = 58;
-const WIN_MAX_H = 520;
+const BAR_W = 380;
+const BAR_H = 48;
+const WIN_MAX_H = 480;
 
 // Screenshots are pasted into a chat composer, so there is no point sending more
 // pixels than the site will keep. This also keeps the base64 blob we hand to
@@ -36,6 +36,8 @@ class Ask {
     this.hostReady = null;
     this.pending = new Map(); // requestId -> { resolve, timer }
     this.seq = 0;
+    this.anchor = null; // top-left of the input bar, independent of reply direction
+    this.layoutDirection = 'below';
   }
 
   /* ── offscreen automation host ─────────────────────────────────────── */
@@ -90,6 +92,8 @@ class Ask {
     if (this.win && !this.win.isDestroyed()) return this.win;
 
     const bounds = this.startBounds();
+    this.anchor = { x: bounds.x, y: bounds.y };
+    this.layoutDirection = 'below';
 
     this.win = new BrowserWindow({
       ...bounds,
@@ -156,7 +160,13 @@ class Ask {
 
   rememberPosition() {
     if (!this.win || this.win.isDestroyed()) return;
-    const [x, y] = this.win.getPosition();
+    const bounds = this.win.getBounds();
+    const x = bounds.x;
+    const y =
+      this.layoutDirection === 'above'
+        ? bounds.y + bounds.height - BAR_H
+        : bounds.y;
+    this.anchor = { x, y };
     this.settings.set({ askBounds: { x, y } });
   }
 
@@ -176,23 +186,50 @@ class Ask {
     else this.show();
   }
 
-  /** The bar grows to fit an answer, then shrinks back to a bare input. */
+  /**
+   * Keep the input bar anchored while the reply bubble grows into whichever
+   * side has more room. Near the taskbar that means the bubble opens upward;
+   * near the top of a display it opens downward.
+   */
   resize(height) {
     if (!this.win || this.win.isDestroyed()) return;
-    const h = Math.max(BAR_H, Math.min(WIN_MAX_H, Math.round(height)));
-    const [x, y] = this.win.getPosition();
-    this.win.setBounds({ x, y, width: BAR_W, height: h }, false);
+    const desiredH = Math.max(BAR_H, Math.min(WIN_MAX_H, Math.round(height)));
+    if (!this.anchor) this.rememberPosition();
+
+    const current = this.anchor || { x: this.win.getBounds().x, y: this.win.getBounds().y };
+    const display = screen.getDisplayNearestPoint({
+      x: Math.round(current.x + BAR_W / 2),
+      y: Math.round(current.y + BAR_H / 2),
+    });
+    const wa = display.workArea;
+    const right = wa.x + wa.width;
+    const bottom = wa.y + wa.height;
+    const anchorX = Math.max(wa.x, Math.min(right - BAR_W, current.x));
+    const anchorY = Math.max(wa.y, Math.min(bottom - BAR_H, current.y));
+
+    const above = Math.max(0, anchorY - wa.y);
+    const below = Math.max(0, bottom - (anchorY + BAR_H));
+    const hasReply = desiredH > BAR_H;
+    const direction = hasReply && above > below ? 'above' : 'below';
+    const capacity = direction === 'above' ? above : below;
+    const h = hasReply ? Math.min(desiredH, BAR_H + capacity) : BAR_H;
+    const y = direction === 'above' ? anchorY - (h - BAR_H) : anchorY;
+
+    this.anchor = { x: anchorX, y: anchorY };
+    this.layoutDirection = direction;
+    this.win.webContents.send('ask:layout', { direction, height: h });
+    this.win.setBounds({ x: anchorX, y, width: BAR_W, height: h }, false);
   }
 
   /* ── capture ───────────────────────────────────────────────────────── */
 
   /** The display the bar is sitting on — that is what the user is looking at. */
   currentDisplay() {
-    if (this.win && !this.win.isDestroyed()) {
-      const b = this.win.getBounds();
+    if (this.anchor || (this.win && !this.win.isDestroyed())) {
+      const b = this.anchor || this.win.getBounds();
       return screen.getDisplayNearestPoint({
-        x: Math.round(b.x + b.width / 2),
-        y: Math.round(b.y + b.height / 2),
+        x: Math.round(b.x + BAR_W / 2),
+        y: Math.round(b.y + BAR_H / 2),
       });
     }
     return screen.getPrimaryDisplay();
@@ -266,27 +303,30 @@ class Ask {
     const site = typeof this.sites === 'function' ? this.sites()[target] : null;
     if (!site) return { ok: false, error: `Unknown target "${target}".` };
 
-    let image;
-    const bar = this.win && !this.win.isDestroyed() && this.win.isVisible() ? this.win : null;
-    // The panel gets hidden too: asked from an open web pane it would otherwise
-    // occupy 520px of the shot, covering whatever the question is about.
-    const panel = this.mainWindow();
-    const panelWasVisible = panel && !panel.isDestroyed() && panel.isVisible();
+    let image = null;
+    const includeScreenshot = !!this.settings.get().askIncludeScreenshot;
 
-    try {
-      if (bar) bar.hide();
-      if (panelWasVisible) panel.hide();
-      if (bar || panelWasVisible) await new Promise((r) => setTimeout(r, CAPTURE_HIDE_MS));
-      image = await this.captureCurrentScreen();
-    } catch (err) {
-      return { ok: false, error: `Couldn't capture the screen: ${err.message}` };
-    } finally {
-      // Restore the panel first — the injection needs it laid out.
-      if (panelWasVisible && panel && !panel.isDestroyed()) panel.showInactive();
-      if (bar && !bar.isDestroyed()) bar.showInactive();
+    if (includeScreenshot) {
+      const bar = this.win && !this.win.isDestroyed() && this.win.isVisible() ? this.win : null;
+      // The panel gets hidden too: asked from an open web pane it would otherwise
+      // occupy 520px of the shot, covering whatever the question is about.
+      const panel = this.mainWindow();
+      const panelWasVisible = panel && !panel.isDestroyed() && panel.isVisible();
+
+      try {
+        if (bar) bar.hide();
+        if (panelWasVisible) panel.hide();
+        if (bar || panelWasVisible) await new Promise((r) => setTimeout(r, CAPTURE_HIDE_MS));
+        image = await this.captureCurrentScreen();
+      } catch (err) {
+        return { ok: false, error: `Couldn't capture the screen: ${err.message}` };
+      } finally {
+        if (panelWasVisible && panel && !panel.isDestroyed()) panel.showInactive();
+        if (bar && !bar.isDestroyed()) bar.showInactive();
+      }
     }
 
-    this.relayStatus('Sending to the chat…');
+    this.relayStatus(includeScreenshot ? 'Sending screenshot and prompt…' : 'Sending prompt…');
     return this.runInHost({ prompt: text, target, image, url: site.url }, 150_000);
   }
 
