@@ -334,6 +334,16 @@ api.data.onAdded((item) => {
   renderList();
 });
 
+api.data.onReplaced((next) => {
+  if (!next || !Array.isArray(next.items)) return;
+  clearTimeout(saveTimer); // a pending save of the old copy would undo the change
+  data = { ...next, links: Array.isArray(next.links) ? next.links : [] };
+  data.items.forEach((i) => seenIds.add(i.id));
+  data.links.forEach((l) => seenIds.add(l.id));
+  renderAll();
+  if (!el.sheet.hidden) renderArchive();
+});
+
 const items = () => data.items;
 const find = (id) => data.items.find((i) => i.id === id);
 const live = (kind) => data.items.filter((i) => i.kind === kind && !i.archived);
@@ -572,12 +582,14 @@ function renderList() {
     return;
   }
 
+  if (view === 'schedule' && calMode === 'month') return renderCalendar();
+
   const kind = view === 'schedule' ? 'event' : 'task';
   const list = live(kind);
   const nextId = nextUpId(list);
   const groups = buildGroups(list);
 
-  el.list.innerHTML = groups
+  el.list.innerHTML = (view === 'schedule' ? calSwitchHtml() : '') + groups
     .map(
       (g) =>
         `<div class="group-label${g.late ? ' is-late' : ''}">${esc(g.label)}</div>` +
@@ -604,6 +616,181 @@ function renderList() {
   }
   renderCounts();
 }
+
+/* ── calendar (Schedule → Month) ─────────────────────────────────────── */
+
+let calMode = 'list'; // list | month
+let calMonth = null; // first day of the shown month (ms)
+let calDay = null; // selected day (start of day, ms)
+
+function calSwitchHtml() {
+  const on = (m) => (calMode === m ? ' class="is-on"' : '');
+  return `<div class="cal-switch" role="tablist">
+    <button type="button" data-cal-mode="list"${on('list')}>List</button>
+    <button type="button" data-cal-mode="month"${on('month')}>Month</button>
+  </div>`;
+}
+
+function monthStart(ms) {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+}
+
+/** Events and dated tasks on the calendar, keyed by start of day. */
+function datedByDay() {
+  const map = new Map();
+  for (const i of data.items) {
+    if (i.archived || (i.kind !== 'event' && i.kind !== 'task') || !Number.isFinite(i.at)) continue;
+    const key = startOfDay(i.at);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(i);
+  }
+  return map;
+}
+
+function renderCalendar() {
+  const today = startOfDay(Date.now());
+  if (calDay == null) calDay = today;
+  if (calMonth == null) calMonth = monthStart(calDay);
+
+  const byDay = datedByDay();
+  const first = new Date(calMonth);
+  const year = first.getFullYear();
+  const month = first.getMonth();
+  const lead = first.getDay(); // Sunday-first grid
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = Math.ceil((lead + daysInMonth) / 7) * 7;
+
+  const weekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d) => `<span>${d}</span>`).join('');
+  let grid = '';
+  for (let c = 0; c < cells; c += 1) {
+    const day = new Date(year, month, c - lead + 1).getTime();
+    const inMonth = c >= lead && c < lead + daysInMonth;
+    const list = byDay.get(day) || [];
+    const events = list.filter((i) => i.kind === 'event' && !i.done).length;
+    const tasks = list.filter((i) => i.kind === 'task' && !i.done).length;
+    const cls = ['cal-day'];
+    if (!inMonth) cls.push('is-out');
+    if (day === today) cls.push('is-today');
+    if (day === calDay) cls.push('is-sel');
+    if (day < today && list.some((i) => !i.done)) cls.push('is-late');
+    const dots = (events ? '<i class="dot-ev"></i>' : '') + (tasks ? '<i class="dot-tk"></i>' : '');
+    const label = new Date(day).toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+    const count = events + tasks;
+    const tip = `${label}${count ? ` — ${count} item${count === 1 ? '' : 's'}` : ''}`;
+    grid += `<button type="button" class="${cls.join(' ')}" data-day="${day}" title="${esc(tip)}"><span>${new Date(day).getDate()}</span><span class="cal-dots">${dots}</span></button>`;
+  }
+
+  const dayItems = (byDay.get(calDay) || []).sort((a, b) => {
+    if (a.done !== b.done) return a.done ? 1 : -1;
+    return a.at - b.at;
+  });
+  const nextId = nextUpId(live('event'));
+  const dayLabel =
+    calDay === today
+      ? 'Today'
+      : calDay === today + DAY
+        ? 'Tomorrow'
+        : new Date(calDay).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+  const monthLabel = first.toLocaleDateString([], { month: 'long', year: 'numeric' });
+
+  el.list.innerHTML = `${calSwitchHtml()}
+    <section class="cal">
+      <header class="cal-head">
+        <strong>${esc(monthLabel)}</strong>
+        <button type="button" class="cal-today" data-cal-nav="0">Today</button>
+        <button type="button" class="ico cal-prev" data-cal-nav="-1" title="Previous month">${ICON('i-back')}</button>
+        <button type="button" class="ico" data-cal-nav="1" title="Next month">${ICON('i-chevron')}</button>
+      </header>
+      <div class="cal-week">${weekdays}</div>
+      <div class="cal-grid">${grid}</div>
+    </section>
+    <div class="group-label">${esc(dayLabel)}</div>
+    ${dayItems.length
+      ? dayItems.map((i) => itemHtml(i, nextId)).join('')
+      : '<p class="cal-empty">Nothing on this day. Type below to add an event here.</p>'}`;
+  el.empty.hidden = true;
+  if (editingId) {
+    const input = $('.title-edit', el.list);
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }
+  renderCounts();
+  refreshCalendarComposer();
+}
+
+function refreshCalendarComposer() {
+  if (view !== 'schedule') return;
+  const today = startOfDay(Date.now());
+  if (calMode === 'month' && calDay != null && calDay !== today) {
+    const d = new Date(calDay).toLocaleDateString([], { month: 'short', day: 'numeric' });
+    el.input.placeholder = `Add an event on ${d}…`;
+  } else {
+    el.input.placeholder = PLACEHOLDER.schedule;
+  }
+}
+
+const DATE_WORDS =
+  /\b(today|tonight|tomorrow|tmrw|yesterday|mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|in\s+\d|\d{1,2}\/\d{1,2})/i;
+
+/**
+ * In Month view, new events land on the selected day: an undated entry gets
+ * 9:00 that day, and a time-only entry ("standup 3pm") keeps its time but
+ * moves from today to that day. Explicit dates still win.
+ */
+function onSelectedDay(at, raw) {
+  if (view !== 'schedule' || calMode !== 'month' || calDay == null) return at;
+  const today = startOfDay(Date.now());
+  if (calDay === today) return at;
+  if (at == null) return calDay + 9 * 3600_000;
+  if (startOfDay(at) === today && !DATE_WORDS.test(raw)) {
+    const d = new Date(at);
+    const day = new Date(calDay);
+    day.setHours(d.getHours(), d.getMinutes(), 0, 0);
+    return day.getTime();
+  }
+  return at;
+}
+
+el.list.addEventListener('click', (e) => {
+  const mode = e.target.closest('[data-cal-mode]');
+  if (mode) {
+    calMode = mode.dataset.calMode === 'month' ? 'month' : 'list';
+    if (calMode === 'month') {
+      calDay = startOfDay(Date.now());
+      calMonth = monthStart(calDay);
+    }
+    api.settings.set({ scheduleMode: calMode });
+    renderList();
+    refreshCalendarComposer();
+    refreshComposer();
+    return;
+  }
+  const nav = e.target.closest('[data-cal-nav]');
+  if (nav) {
+    const step = Number(nav.dataset.calNav);
+    if (step === 0) {
+      calDay = startOfDay(Date.now());
+      calMonth = monthStart(calDay);
+    } else {
+      const d = new Date(calMonth);
+      calMonth = new Date(d.getFullYear(), d.getMonth() + step, 1).getTime();
+    }
+    renderList();
+    refreshComposer();
+    return;
+  }
+  const day = e.target.closest('[data-day]');
+  if (day) {
+    calDay = Number(day.dataset.day);
+    if (monthStart(calDay) !== calMonth) calMonth = monthStart(calDay);
+    renderList();
+    refreshComposer();
+    el.input.focus();
+  }
+});
 
 function renderCounts() {
   const ev = live('event').filter((i) => !i.done).length;
@@ -1321,7 +1508,9 @@ el.toastUndo.addEventListener('click', () => {
 
 function currentWhen() {
   if (manualWhen) return manualWhen.at;
-  return parseWhen(el.input.value).at;
+  const raw = el.input.value;
+  const at = parseWhen(raw).at;
+  return raw.trim() ? onSelectedDay(at, raw) : at;
 }
 
 function currentCat() {
@@ -1409,7 +1598,7 @@ el.form.addEventListener('submit', (e) => {
     at = manualWhen.at;
     title = at == null ? raw : parsed.title || raw;
   } else {
-    at = parsed.at;
+    at = onSelectedDay(parsed.at, raw);
     title = parsed.title || raw;
   }
   if (!title) title = raw;
@@ -1647,6 +1836,7 @@ function applyViewChrome() {
   el.html.dataset.view = view;
   $$('.seg-btn').forEach((b) => b.classList.toggle('is-on', b.dataset.view === view));
   el.input.placeholder = PLACEHOLDER[view];
+  refreshCalendarComposer();
   el.hint.textContent = HINT[view];
   $('[data-act="when"]').hidden = view !== 'schedule' && view !== 'tasks';
   $('[data-act="cat"]').hidden = view !== 'links';
@@ -1679,6 +1869,7 @@ function openSheet(pane = 'settings') {
   setPane(pane);
   renderArchive();
   syncSettingsUi();
+  if (pane === 'settings') refreshCodexUi();
 }
 function closeSheet() {
   $('[data-act="tools"]').classList.remove('is-on');
@@ -1733,6 +1924,11 @@ el.sheet.addEventListener('click', (e) => {
   }
   if (act === 'screen') api.dock.cycleDisplay();
   if (act === 'quit') api.quit();
+  if (act === 'codexSign') return codexSignInOut();
+  if (act === 'codexFolder') {
+    api.codex.pickFolder().then((folder) => folder && refreshCodexUi());
+    return;
+  }
 
   const mail = e.target.closest('[data-mail]');
   if (mail) {
@@ -1772,6 +1968,51 @@ el.sheet.addEventListener('change', (e) => {
   const key = e.target.dataset?.toggle;
   if (key) applySettings({ [key]: e.target.checked });
 });
+
+/* ── ChatGPT (Codex) connection ──────────────────────────────────────── */
+
+let codexState = null;
+
+async function refreshCodexUi() {
+  const status = $('#codexStatus');
+  const sign = $('#codexSign');
+  const folder = $('#codexFolder');
+  let st;
+  try {
+    st = await api.codex.status();
+  } catch (_) {
+    st = { installed: false, signedIn: false };
+  }
+  codexState = st;
+  status.classList.toggle('is-ok', !!st.signedIn);
+  status.classList.toggle('is-bad', !st.installed);
+  status.textContent = !st.installed
+    ? 'Install Codex to connect ChatGPT: npm i -g @openai/codex'
+    : st.signedIn
+      ? st.method === 'chatgpt'
+        ? 'Connected to your ChatGPT account. ChatGPT can read files in the folder below.'
+        : 'Connected with an API key.'
+      : 'Not signed in. Sign in with your ChatGPT account to use it from the Ask bar.';
+  sign.hidden = !st.installed;
+  sign.textContent = st.signedIn ? 'Sign out' : 'Sign in';
+  sign.disabled = false;
+  if (st.folder) {
+    folder.textContent = st.folder;
+    folder.title = `${st.folder} — click to change`;
+  }
+}
+
+async function codexSignInOut() {
+  const sign = $('#codexSign');
+  sign.disabled = true;
+  if (codexState?.signedIn) {
+    await api.codex.logout();
+  } else {
+    sign.textContent = 'Finish in browser…';
+    await api.codex.login();
+  }
+  refreshCodexUi();
+}
 
 /* ── settings ────────────────────────────────────────────────────────── */
 
@@ -1833,6 +2074,31 @@ function cycleTheme() {
   const next = order[(order.indexOf(settings.theme || 'system') + 1) % order.length];
   applySettings({ theme: next });
 }
+
+/* ── blur effect ─────────────────────────────────────────────────────── */
+
+let wall = null; // { image, display } from the main process, or null when off
+
+/** Line the wallpaper up with the desktop: offset = display origin − panel origin. */
+function placeWall() {
+  if (!wall) return;
+  const r = el.panel.getBoundingClientRect();
+  const x = Math.round(wall.display.x - (window.screenX + r.left));
+  const y = Math.round(wall.display.y - (window.screenY + r.top));
+  el.panel.style.setProperty('--wall-pos', `${x}px ${y}px`);
+}
+
+api.backdrop.onChange((payload) => {
+  wall = payload && payload.image ? payload : null;
+  el.html.classList.toggle('has-backdrop', !!wall);
+  if (!wall) return;
+  el.panel.style.setProperty('--wall-img', `url("${wall.image}")`);
+  el.panel.style.setProperty('--wall-size', `${wall.display.width}px ${wall.display.height}px`);
+  placeWall();
+});
+api.backdrop.onMove(placeWall);
+window.addEventListener('resize', placeWall);
+el.panel.addEventListener('transitionend', placeWall);
 
 /* ── embedded AI browser ─────────────────────────────────────────────── */
 
@@ -2710,6 +2976,7 @@ setInterval(() => {
 
   settings = s;
   view = ['notes', 'tasks', 'links'].includes(s.view) ? s.view : 'schedule';
+  calMode = s.scheduleMode === 'month' ? 'month' : 'list';
   applyViewChrome();
 
   applyDock(metrics);

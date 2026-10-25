@@ -1,7 +1,12 @@
 'use strict';
 
-const { BrowserWindow, screen, desktopCapturer, ipcMain } = require('electron');
+const { BrowserWindow, screen, desktopCapturer, ipcMain, dialog } = require('electron');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { Codex } = require('./codex');
+const assistant = require('./assistant');
+const { toggleVoiceTyping } = require('./voice');
 
 // The bar is a separate always-on-top window so it can sit over anything the
 // user is looking at, on any monitor, independent of where the panel is docked.
@@ -27,7 +32,7 @@ class Ask {
    * @param {(contents) => void} o.harden       webview lockdown for the host window
    * @param {() => object} o.sites              resolved pane sites, for target URLs
    */
-  constructor({ root, settings, mainWindow, harden, sites }) {
+  constructor({ root, settings, mainWindow, harden, sites, data, stateDir }) {
     this.root = root;
     this.settings = settings;
     this.mainWindow = mainWindow;
@@ -42,6 +47,13 @@ class Ask {
     this.seq = 0;
     this.anchor = null; // top-left of the input bar, independent of reply direction
     this.layoutDirection = 'below';
+    // ChatGPT runs through Codex on the user's ChatGPT plan; only Claude still
+    // drives a chat page in the offscreen host.
+    this.codex = new Codex({ settings });
+    // { get, set } over the user's items, so ChatGPT can add and change them.
+    this.data = data;
+    this.schemaPath = stateDir ? assistant.writeSchema(stateDir) : null;
+    this.lastUndo = null;
   }
 
   /* ── offscreen automation host ─────────────────────────────────────── */
@@ -215,6 +227,14 @@ class Ask {
     win.webContents.send('ask:focus');
   }
 
+  /** Alt+Shift+V: open the bar and start dictating into it. */
+  startVoice() {
+    this.show();
+    const go = () => this.win && !this.win.isDestroyed() && this.win.webContents.send('ask:voice');
+    if (this.win.webContents.isLoading()) this.win.webContents.once('did-finish-load', () => setTimeout(go, 120));
+    else go();
+  }
+
   hide() {
     if (!this.win || this.win.isDestroyed()) return;
     if (this.win.isVisible()) this.win.hide();
@@ -371,8 +391,72 @@ class Ask {
       }
     }
 
+    if (target === 'chatgpt') return this.askCodex(text, image);
+
     this.relayStatus(includeScreenshot ? 'Sending screenshot and prompt…' : 'Sending prompt…');
     return this.runInHost({ prompt: text, target, image, url: site.url }, 150_000);
+  }
+
+  /** ChatGPT via Codex: it reads files itself, so no web page is involved. */
+  async askCodex(prompt, image) {
+    let imagePath = null;
+    if (image) {
+      imagePath = path.join(os.tmpdir(), `sidenote-ask-${Date.now()}.png`);
+      try {
+        fs.writeFileSync(imagePath, Buffer.from(image, 'base64'));
+      } catch (_) {
+        imagePath = null;
+      }
+    }
+    const manage = this.data && this.schemaPath && this.settings.get().askManage !== false;
+    this.relayStatus(this.codex.threadId ? 'Continuing the chat…' : 'Starting ChatGPT…');
+    let res;
+    try {
+      res = await this.codex.ask({
+        prompt: manage ? assistant.buildPrompt(prompt, this.data.get()) : prompt,
+        imagePath,
+        schemaPath: manage ? this.schemaPath : null,
+        onStatus: (t) => this.relayStatus(t),
+      });
+    } finally {
+      if (imagePath) fs.rm(imagePath, { force: true }, () => {});
+    }
+    if (!manage || !res.ok) return res;
+
+    const { reply, actions } = assistant.parseAnswer(res.text);
+    const result = assistant.applyActions(actions, this.data.get());
+    if (result.changed) {
+      this.data.set(result.data);
+      this.lastUndo = result.undo;
+    }
+    return {
+      ok: true,
+      text: reply || (result.changed ? 'Done.' : res.text),
+      applied: result.applied,
+      skipped: result.skipped,
+      undoable: result.changed,
+    };
+  }
+
+  /** Reverses the last batch of changes ChatGPT made. */
+  undoLast() {
+    if (!this.lastUndo || !this.data) return { ok: false, error: 'Nothing to undo.' };
+    this.data.set(this.lastUndo(this.data.get()));
+    this.lastUndo = null;
+    return { ok: true };
+  }
+
+  async pickFolder() {
+    const parent = this.win && !this.win.isDestroyed() && this.win.isVisible() ? this.win : this.mainWindow();
+    const res = await dialog.showOpenDialog(parent, {
+      title: 'Folder ChatGPT can work in',
+      defaultPath: this.codex.folder(),
+      properties: ['openDirectory'],
+    });
+    if (res.canceled || !res.filePaths[0]) return null;
+    this.settings.set({ askFolder: res.filePaths[0] });
+    this.codex.newChat(); // a new folder means a fresh conversation
+    return res.filePaths[0];
   }
 
   registerIpc() {
@@ -383,9 +467,22 @@ class Ask {
     ipcMain.on('ask:hide', () => this.hide());
     ipcMain.on('ask:result', (_e, msg) => this.settle(msg?.id, msg?.result));
     ipcMain.on('ask:progress', (_e, text) => this.relayStatus(String(text || '')));
+    ipcMain.on('ask:cancel', () => this.codex.cancel());
+    ipcMain.on('ask:newChat', () => this.codex.newChat());
+    ipcMain.handle('ask:undo', () => this.undoLast());
+    // The renderer focuses its input first, then asks for Win+H.
+    ipcMain.handle('ask:voiceKey', () => {
+      if (this.win && !this.win.isDestroyed()) this.win.focus();
+      return toggleVoiceTyping();
+    });
+    ipcMain.handle('codex:status', () => this.codex.status());
+    ipcMain.handle('codex:login', () => this.codex.login());
+    ipcMain.handle('codex:logout', () => this.codex.logout());
+    ipcMain.handle('codex:pickFolder', () => this.pickFolder());
   }
 
   destroy() {
+    this.codex.destroy();
     clearTimeout(this.hostIdleTimer);
     clearTimeout(this.barIdleTimer);
     for (const { timer } of this.pending.values()) clearTimeout(timer);

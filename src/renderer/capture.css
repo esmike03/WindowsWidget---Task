@@ -154,7 +154,6 @@ html[data-layout='above'] #shell {
   overflow: hidden;
   border-radius: 13px;
   background: var(--glass);
-  backdrop-filter: blur(26px) saturate(1.7);
   box-shadow: var(--shadow);
   /* the whole strip is a drag handle; controls opt out via -webkit-app-region */
   -webkit-app-region: drag;
@@ -295,7 +294,6 @@ html[data-theme='dark'] .kind-thumb {
   font-weight: 600;
   color: var(--txt-2);
   background: var(--glass);
-  backdrop-filter: blur(26px) saturate(1.7);
   box-shadow: var(--shadow);
   animation: hintIn 0.2s var(--ease);
 }

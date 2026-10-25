@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('sidenote', {
     // An item saved from the floating quick-capture bar, so the panel's
     // in-memory copy stays in step and its next save doesn't drop it.
     onAdded: (fn) => on('data:added', fn),
+    // ChatGPT changed items from the Ask bar; take the store's copy wholesale.
+    onReplaced: (fn) => on('data:replaced', fn),
   },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
@@ -33,6 +35,11 @@ contextBridge.exposeInMainWorld('sidenote', {
   },
   theme: {
     onChange: (fn) => on('theme:changed', fn),
+  },
+  // Blurred wallpaper behind the panel (see src/main/backdrop.js).
+  backdrop: {
+    onChange: (fn) => on('backdrop:changed', fn),
+    onMove: (fn) => on('backdrop:moved', fn),
   },
   links: {
     open: (url) => ipcRenderer.invoke('link:open', url),
@@ -56,6 +63,13 @@ contextBridge.exposeInMainWorld('sidenote', {
   // offscreen host window (see askhost.js), so the panel is never disturbed.
   ask: {
     show: () => ipcRenderer.send('ask:show'),
+  },
+  // ChatGPT runs through the Codex CLI on the user's ChatGPT plan.
+  codex: {
+    status: () => ipcRenderer.invoke('codex:status'),
+    login: () => ipcRenderer.invoke('codex:login'),
+    logout: () => ipcRenderer.invoke('codex:logout'),
+    pickFolder: () => ipcRenderer.invoke('codex:pickFolder'),
   },
   ai: {
     sites: () => ipcRenderer.invoke('ai:sites'),
