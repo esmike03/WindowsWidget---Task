@@ -341,6 +341,13 @@
 
         <div class="set-group">
           <div class="set-label">Ask bar · ChatGPT</div>
+          <div class="set-row">
+            <span>Connection</span>
+            <div class="pick" data-pick="chatgptMode" id="chatgptModePick">
+              <button data-value="codex" title="Uses the Codex app on this PC. It can read and (if allowed) edit files.">Codex app</button>
+              <button data-value="direct" title="Sign in with ChatGPT. No Codex install needed; reads files in the folder below.">ChatGPT account</button>
+            </div>
+          </div>
           <div class="set-sub" id="codexStatus">Checking ChatGPT connection…</div>
           <div class="login-code" id="codexCode" hidden>
             <span>Enter this code in <b id="codexCodeWhere">your browser</b>:</span>
@@ -364,7 +371,7 @@
             <span>Folder</span>
             <button class="btn btn-ghost set-path" type="button" data-act="codexFolder" id="codexFolder" title="Choose the folder ChatGPT can read">Home</button>
           </div>
-          <div class="set-row">
+          <div class="set-row row-access">
             <span>File access</span>
             <div class="pick" data-pick="askAccess">
               <button data-value="read">Read only</button>
@@ -412,7 +419,7 @@
         </div>
 
         <div class="set-foot">
-          <span>Sidenote 1.6.1 · Alt+Shift+N</span>
+          <span>Sidenote 1.7.0 · Alt+Shift+N</span>
           <button class="btn btn-ghost btn-danger" data-act="quit">Quit</button>
         </div>
       </section>

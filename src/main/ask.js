@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { Codex } = require('./codex');
+const { ChatGptDirect } = require('./chatgpt-direct');
 const assistant = require('./assistant');
 const { toggleVoiceTyping } = require('./voice');
 const { openInLastBrowser } = require('./browser');
@@ -55,6 +56,10 @@ class Ask {
     this.data = data;
     this.schemaPath = stateDir ? assistant.writeSchema(stateDir) : null;
     this.lastUndo = null;
+    // The other way to reach ChatGPT: "Sign in with ChatGPT", no Codex install.
+    this.direct = stateDir
+      ? new ChatGptDirect({ dir: stateDir, settings, folder: () => this.codex.folder() })
+      : null;
   }
 
   /* ── offscreen automation host ─────────────────────────────────────── */
@@ -392,7 +397,9 @@ class Ask {
       }
     }
 
-    if (target === 'chatgpt') return this.askCodex(text, image);
+    if (target === 'chatgpt') {
+      return this.chatgptMode() === 'direct' ? this.askDirect(text, image) : this.askCodex(text, image);
+    }
 
     this.relayStatus(includeScreenshot ? 'Sending screenshot and prompt…' : 'Sending prompt…');
     return this.runInHost({ prompt: text, target, image, url: site.url }, 150_000);
@@ -422,6 +429,38 @@ class Ask {
     } finally {
       if (imagePath) fs.rm(imagePath, { force: true }, () => {});
     }
+    return this.finishAnswer(res, manage);
+  }
+
+  /**
+   * Which way ChatGPT is reached: the user's choice, or by default Codex when
+   * it's installed and the direct sign-in otherwise.
+   */
+  chatgptMode() {
+    const pick = this.settings.get().chatgptMode;
+    if (pick === 'direct' || pick === 'codex') return pick;
+    return this.codex.bin() ? 'codex' : 'direct';
+  }
+
+  /** ChatGPT through "Sign in with ChatGPT": answers on the user's plan. */
+  async askDirect(prompt, image) {
+    if (!this.direct) return { ok: false, error: 'The direct ChatGPT connection is unavailable.' };
+    if (!this.direct.status().signedIn) {
+      return { ok: false, error: 'Sign in with your ChatGPT account first.', needsSignIn: true };
+    }
+    const manage = !!this.data && this.settings.get().askManage !== false;
+    const res = await this.direct.ask({
+      prompt,
+      image,
+      data: manage ? this.data.get() : null,
+      manage,
+      onStatus: (t) => this.relayStatus(t),
+    });
+    return this.finishAnswer(res, manage);
+  }
+
+  /** Applies the Sidenote changes in a structured answer (both connections). */
+  finishAnswer(res, manage) {
     if (!manage || !res.ok) return res;
 
     const { reply, actions } = assistant.parseAnswer(res.text);
@@ -468,8 +507,32 @@ class Ask {
     ipcMain.on('ask:hide', () => this.hide());
     ipcMain.on('ask:result', (_e, msg) => this.settle(msg?.id, msg?.result));
     ipcMain.on('ask:progress', (_e, text) => this.relayStatus(String(text || '')));
-    ipcMain.on('ask:cancel', () => this.codex.cancel());
-    ipcMain.on('ask:newChat', () => this.codex.newChat());
+    ipcMain.on('ask:cancel', () => {
+      this.codex.cancel();
+      this.direct?.cancel();
+    });
+    ipcMain.on('ask:newChat', () => {
+      this.codex.newChat();
+      this.direct?.newChat();
+    });
+    ipcMain.handle('chatgpt:mode', () => this.chatgptMode());
+    ipcMain.handle('direct:status', () => (this.direct ? this.direct.status() : { signedIn: false }));
+    ipcMain.handle('direct:signIn', async () => {
+      try {
+        return { ok: true, status: await this.direct.signIn() };
+      } catch (err) {
+        return { ok: false, error: err.message, status: this.direct.status() };
+      }
+    });
+    ipcMain.on('direct:cancelSignIn', () => this.direct?.cancelSignIn());
+    ipcMain.handle('direct:signOut', () => this.direct.signOut());
+    ipcMain.handle('direct:models', async () => {
+      try {
+        return await this.direct.models();
+      } catch (err) {
+        return { models: [], efforts: [], error: err.message };
+      }
+    });
     ipcMain.handle('ask:undo', () => this.undoLast());
     // The renderer focuses its input first, then asks for Win+H.
     ipcMain.handle('ask:voiceKey', () => {
@@ -505,6 +568,7 @@ class Ask {
 
   destroy() {
     this.codex.destroy();
+    this.direct?.destroy();
     clearTimeout(this.hostIdleTimer);
     clearTimeout(this.barIdleTimer);
     for (const { timer } of this.pending.values()) clearTimeout(timer);

@@ -1,4 +1,4 @@
-# Sidenote 1.6.1
+# Sidenote 1.7.0
 
 A small, always-available Windows desktop widget for **notes, tasks and scheduling**.
 It docks flush against the left, right, or top edge of your screen and collapses
@@ -131,6 +131,29 @@ voice typing (Win+H). About two seconds after you stop talking the prompt is
 sent. Switch off **Send voice commands automatically** to review the text first.
 The first time, Windows asks you to accept its online speech service. Voice
 typing needs an internet connection.
+
+**Two ways to connect ChatGPT** (Settings → Ask bar · ChatGPT → *Connection*):
+
+| | Codex app | ChatGPT account |
+| --- | --- | --- |
+| Needs installing | Codex (`npm i -g @openai/codex`) | Nothing, only Sidenote |
+| Sign-in | One-time code in your last-used browser | "Sign in with ChatGPT" in your last-used browser |
+| Uses | Your ChatGPT plan (Codex usage) | Your ChatGPT plan (usage shared with other apps) |
+| Files | Reads; can edit if you allow it | Reads only, inside the chosen folder |
+| Manage notes & schedule | ✅ | ✅ |
+
+By default Sidenote uses Codex when it's installed and the ChatGPT account
+connection otherwise, so a PC with only Sidenote installed still works after
+signing in.
+
+The ChatGPT account connection uses OpenAI's
+[ChatGPT plan usage for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source)
+(a preview). Sidenote registers itself on the first sign-in, keeps the sign-in
+encrypted with Windows (DPAPI) in `%APPDATA%\Sidenote\chatgpt-account.bin`,
+refreshes it automatically, and cancels it with OpenAI when you sign out. Usage
+counts against your ChatGPT plan; when the share available to apps runs out,
+the Ask bar says so. Check it in ChatGPT → Settings → Usage. If the browser stops
+on OpenAI's page after you log in, click **Sign in** again.
 
 Claude still answers through its web page in a hidden window. The bubble automatically opens above
 or below the compact input bar, whichever keeps it on-screen. Screen capture is
@@ -326,6 +349,8 @@ src/main/backdrop.js blurred-wallpaper blur effect
 src/main/assistant.js ChatGPT ↔ Sidenote: context snapshot, actions, undo
 src/main/voice.js    Windows voice typing trigger (Win+H via koffi)
 src/main/browser.js  open a page in the last-used browser
+src/main/chatgpt-direct.js ChatGPT via Sign in with ChatGPT (no Codex)
+src/main/filetools.js read-only file tools for the direct connection
 src/main/codex.js    ChatGPT through the Codex CLI (sign-in, folder, access, follow-ups)
 src/main/capture.js  floating quick-capture window and persistence bridge
 src/preload.js       contextBridge API surface

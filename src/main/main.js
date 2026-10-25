@@ -55,6 +55,9 @@ const DEFAULT_SETTINGS = {
   askManage: true, // ChatGPT may add and change Sidenote items
   askAccess: 'read', // read = look only | edit = may also change files in askFolder
   codexPath: null, // optional override when Codex isn't on PATH
+  chatgptMode: null, // codex | direct; null = Codex if installed, else direct sign-in
+  directModel: null, // model for the direct connection; null = first offered
+  directEffort: null, // thinking level for the direct connection
   codexModel: null, // model for Ask; null = whatever Codex's own config uses
   codexEffort: null, // thinking level: low | medium | high | xhigh | max; null = Codex's
   blurEffect: true, // blurred wallpaper behind the panel
@@ -797,7 +800,10 @@ function registerIpc() {
     if ('trayOnly' in patch && !!patch.trayOnly !== !!before.trayOnly) dock.syncTrayOnly();
     if ('tabSize' in patch && patch.tabSize !== before.tabSize) dock.layout({ animate: true });
     if ('reminders' in patch || 'reminderLeadMinutes' in patch) scheduleNextReminder();
-    if ('askAccess' in patch || 'askFolder' in patch) ask?.codex.newChat();
+    if ('askAccess' in patch || 'askFolder' in patch || 'chatgptMode' in patch) {
+      ask?.codex.newChat();
+      ask?.direct?.newChat();
+    }
     if ('blurEffect' in patch) pushBackdrop();
     if ('hardwareAcceleration' in patch && !!patch.hardwareAcceleration !== !!before.hardwareAcceleration) {
       // Only takes effect at startup, so restart straight away.

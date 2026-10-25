@@ -2937,3 +2937,8 @@ html.has-backdrop .note-editor {
   color: #171a22;
   background: #fff;
 }
+
+/* File access only applies to Codex; the direct connection is read-only. */
+.set-group[data-chatgpt-mode='direct'] .row-access {
+  display: none;
+}
