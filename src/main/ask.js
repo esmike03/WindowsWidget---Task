@@ -7,6 +7,7 @@ const path = require('path');
 const { Codex } = require('./codex');
 const assistant = require('./assistant');
 const { toggleVoiceTyping } = require('./voice');
+const { openInLastBrowser } = require('./browser');
 
 // The bar is a separate always-on-top window so it can sit over anything the
 // user is looking at, on any monitor, independent of where the panel is docked.
@@ -476,7 +477,28 @@ class Ask {
       return toggleVoiceTyping();
     });
     ipcMain.handle('codex:status', () => this.codex.status());
-    ipcMain.handle('codex:login', () => this.codex.login());
+    ipcMain.handle('codex:login', () =>
+      this.codex.login({
+        // Both windows may be showing a sign-in prompt; give each the code.
+        onCode: (info) => {
+          for (const w of [this.mainWindow(), this.win]) {
+            if (w && !w.isDestroyed()) w.webContents.send('codex:loginCode', info);
+          }
+        },
+      })
+    );
+    ipcMain.on('codex:cancelLogin', () => this.codex.cancelLogin());
+    // Re-open the sign-in page; only OpenAI's own auth pages are accepted.
+    ipcMain.handle('codex:openLogin', (_e, url) => {
+      try {
+        if (new URL(String(url)).origin !== 'https://auth.openai.com') return false;
+      } catch (_) {
+        return false;
+      }
+      openInLastBrowser(String(url));
+      return true;
+    });
+    ipcMain.handle('codex:models', () => this.codex.models());
     ipcMain.handle('codex:logout', () => this.codex.logout());
     ipcMain.handle('codex:pickFolder', () => this.pickFolder());
   }

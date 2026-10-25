@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('ask', {
   codexStatus: () => ipcRenderer.invoke('codex:status'),
   codexLogin: () => ipcRenderer.invoke('codex:login'),
   pickFolder: () => ipcRenderer.invoke('codex:pickFolder'),
+  onLoginCode: (fn) => on('codex:loginCode', fn),
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
     set: (patch) => ipcRenderer.invoke('settings:set', patch),

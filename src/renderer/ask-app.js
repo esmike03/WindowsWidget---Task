@@ -223,11 +223,20 @@ async function submit() {
   el.prompt.focus();
 }
 
+api.onLoginCode(({ code, browser }) => {
+  if (!busy) return;
+  const where = browser ? browser[0].toUpperCase() + browser.slice(1) : 'your browser';
+  el.answer.textContent = `The ChatGPT sign-in page opened in ${where}. Sign in there and enter this code:\n\n${code}`;
+  fit();
+});
+
 async function signInChatGpt() {
+  busy = true;
   showOut({ status: 'Signing in…', working: true, text: '' });
-  el.answer.textContent = 'Finish signing in to your ChatGPT account in the browser window that just opened.';
+  el.answer.textContent = 'Opening the ChatGPT sign-in page…';
   fit();
   const res = await api.codexLogin().catch((e) => ({ ok: false, error: e.message }));
+  busy = false;
   if (res && res.ok) showOut({ status: 'Signed in', text: 'ChatGPT is connected. Ask your question again.' });
   else showOut({ status: 'Failed', error: (res && res.error) || 'Sign-in was not completed.' });
 }

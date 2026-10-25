@@ -1925,6 +1925,7 @@ el.sheet.addEventListener('click', (e) => {
   if (act === 'screen') api.dock.cycleDisplay();
   if (act === 'quit') api.quit();
   if (act === 'codexSign') return codexSignInOut();
+  if (act === 'codexOpenAgain' && codexLoginUrl) return api.codex.openLogin(codexLoginUrl);
   if (act === 'codexFolder') {
     api.codex.pickFolder().then((folder) => folder && refreshCodexUi());
     return;
@@ -1972,6 +1973,61 @@ el.sheet.addEventListener('change', (e) => {
 /* ── ChatGPT (Codex) connection ──────────────────────────────────────── */
 
 let codexState = null;
+let codexLoginUrl = null;
+const EFFORT_LABEL = { low: 'Low — fastest', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max — slowest' };
+
+/** Fills the Model and Thinking pickers from the models this account has. */
+async function renderCodexModels() {
+  const modelSel = $('#codexModel');
+  const effortSel = $('#codexEffort');
+  let info;
+  try {
+    info = await api.codex.models();
+  } catch (_) {
+    info = { models: [], efforts: [] };
+  }
+  const models = info.models || [];
+  const current = settings.codexModel || '';
+  const nameOf = (id) => models.find((m) => m.id === id)?.name || id;
+  const opts = [`<option value="">Default${info.configModel ? ` (${esc(nameOf(info.configModel))})` : ''}</option>`];
+  for (const m of models) {
+    opts.push(`<option value="${esc(m.id)}" title="${esc(m.description)}">${esc(m.name)}</option>`);
+  }
+  if (current && !models.some((m) => m.id === current)) opts.push(`<option value="${esc(current)}">${esc(current)}</option>`);
+  modelSel.innerHTML = opts.join('');
+  modelSel.value = current;
+
+  const chosen = models.find((m) => m.id === (current || info.configModel));
+  const efforts = chosen?.efforts?.length ? chosen.efforts : info.efforts || [];
+  const effortNow = settings.codexEffort || '';
+  const fallback = info.configEffort || chosen?.defaultEffort;
+  effortSel.innerHTML = [
+    `<option value="">Default${fallback ? ` (${esc((EFFORT_LABEL[fallback] || fallback).split(' —')[0])})` : ''}</option>`,
+    ...efforts.map((e) => `<option value="${e}">${esc(EFFORT_LABEL[e] || e)}</option>`),
+  ].join('');
+  effortSel.value = efforts.includes(effortNow) ? effortNow : '';
+}
+
+$('#codexModel').addEventListener('change', async (e) => {
+  await applySettings({ codexModel: e.target.value || null });
+  renderCodexModels();
+});
+$('#codexEffort').addEventListener('change', (e) => applySettings({ codexEffort: e.target.value || null }));
+
+api.codex.onLoginCode(({ url, code, browser }) => {
+  codexLoginUrl = url;
+  $('#codexCode').hidden = false;
+  $('#codexCodeValue').textContent = code;
+  $('#codexCodeWhere').textContent = browser ? browser[0].toUpperCase() + browser.slice(1) : 'your browser';
+});
+$('#codexCodeValue').addEventListener('click', async (e) => {
+  try {
+    await navigator.clipboard.writeText(e.currentTarget.textContent);
+    showToast('Code copied', null);
+  } catch (_) {
+    /* clipboard unavailable */
+  }
+});
 
 async function refreshCodexUi() {
   const status = $('#codexStatus');
@@ -1996,6 +2052,8 @@ async function refreshCodexUi() {
   sign.hidden = !st.installed;
   sign.textContent = st.signedIn ? 'Sign out' : 'Sign in';
   sign.disabled = false;
+  if (st.signedIn) $('#codexCode').hidden = true;
+  renderCodexModels();
   if (st.folder) {
     folder.textContent = st.folder;
     folder.title = `${st.folder} — click to change`;
@@ -2008,9 +2066,11 @@ async function codexSignInOut() {
   if (codexState?.signedIn) {
     await api.codex.logout();
   } else {
-    sign.textContent = 'Finish in browser…';
-    await api.codex.login();
+    sign.textContent = 'Waiting for browser…';
+    const res = await api.codex.login();
+    if (!res?.ok && res?.error) showToast(res.error.slice(0, 80), null);
   }
+  $('#codexCode').hidden = true;
   refreshCodexUi();
 }
 

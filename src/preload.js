@@ -70,6 +70,10 @@ contextBridge.exposeInMainWorld('sidenote', {
     login: () => ipcRenderer.invoke('codex:login'),
     logout: () => ipcRenderer.invoke('codex:logout'),
     pickFolder: () => ipcRenderer.invoke('codex:pickFolder'),
+    models: () => ipcRenderer.invoke('codex:models'),
+    cancelLogin: () => ipcRenderer.send('codex:cancelLogin'),
+    openLogin: (url) => ipcRenderer.invoke('codex:openLogin', url),
+    onLoginCode: (fn) => on('codex:loginCode', fn),
   },
   ai: {
     sites: () => ipcRenderer.invoke('ai:sites'),
