@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('ask', {
   codexLogin: () => ipcRenderer.invoke('codex:login'),
   pickFolder: () => ipcRenderer.invoke('codex:pickFolder'),
   onLoginCode: (fn) => on('codex:loginCode', fn),
+  chatgptMode: () => ipcRenderer.invoke('chatgpt:mode'),
+  directSignIn: () => ipcRenderer.invoke('direct:signIn'),
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
     set: (patch) => ipcRenderer.invoke('settings:set', patch),

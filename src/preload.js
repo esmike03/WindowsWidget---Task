@@ -75,6 +75,15 @@ contextBridge.exposeInMainWorld('sidenote', {
     openLogin: (url) => ipcRenderer.invoke('codex:openLogin', url),
     onLoginCode: (fn) => on('codex:loginCode', fn),
   },
+  // ChatGPT without Codex: "Sign in with ChatGPT" on the user's plan.
+  direct: {
+    mode: () => ipcRenderer.invoke('chatgpt:mode'),
+    status: () => ipcRenderer.invoke('direct:status'),
+    signIn: () => ipcRenderer.invoke('direct:signIn'),
+    cancelSignIn: () => ipcRenderer.send('direct:cancelSignIn'),
+    signOut: () => ipcRenderer.invoke('direct:signOut'),
+    models: () => ipcRenderer.invoke('direct:models'),
+  },
   ai: {
     sites: () => ipcRenderer.invoke('ai:sites'),
     providers: () => ipcRenderer.invoke('ai:providers'),

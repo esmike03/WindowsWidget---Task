@@ -112,8 +112,16 @@ function snapshot(data) {
 }
 
 function buildPrompt(userPrompt, data) {
+  return `${context(data, 'You can also read files on this PC as usual.')}
+
+User request:
+${userPrompt}`;
+}
+
+/** Everything the model needs to know about Sidenote, minus the question. */
+function context(data, filesNote) {
   const now = Date.now();
-  return `You are the assistant inside Sidenote, the user's desktop widget for events, tasks, notes and links. You can also read files on this PC as usual.
+  return `You are the assistant inside Sidenote, the user's desktop widget for events, tasks, notes and links. ${filesNote}
 
 Current local time: ${localStamp(now)} (UTC${utcOffset()}).
 
@@ -126,10 +134,7 @@ Write "when" as local ISO 8601 with the offset, e.g. ${new Date(now).getFullYear
 If nothing in Sidenote should change, return an empty "actions" list. Put your answer to the user in "reply", short and plain, and say what you changed.
 
 Sidenote right now:
-${snapshot(data)}
-
-User request:
-${userPrompt}`;
+${snapshot(data)}`;
 }
 
 /* ── applying actions ────────────────────────────────────────────────── */
@@ -359,4 +364,4 @@ function parseAnswer(text) {
   return { reply: raw, actions: [] };
 }
 
-module.exports = { buildPrompt, applyActions, parseAnswer, writeSchema, SCHEMA };
+module.exports = { buildPrompt, context, applyActions, parseAnswer, writeSchema, SCHEMA };

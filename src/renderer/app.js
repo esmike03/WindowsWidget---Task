@@ -1961,7 +1961,8 @@ el.sheet.addEventListener('click', (e) => {
   if (pick) {
     const key = pick.parentElement.dataset.pick;
     const value = key === 'reminderLeadMinutes' ? Number(pick.dataset.value) : pick.dataset.value;
-    applySettings({ [key]: value });
+    const done = applySettings({ [key]: value });
+    if (key === 'chatgptMode') done.then(refreshCodexUi);
   }
 });
 
@@ -1973,6 +1974,9 @@ el.sheet.addEventListener('change', (e) => {
 /* ── ChatGPT (Codex) connection ──────────────────────────────────────── */
 
 let codexState = null;
+let chatgptMode = 'codex'; // the connection in effect: codex | direct
+const modelKey = () => (chatgptMode === 'direct' ? 'directModel' : 'codexModel');
+const effortKey = () => (chatgptMode === 'direct' ? 'directEffort' : 'codexEffort');
 let codexLoginUrl = null;
 const EFFORT_LABEL = { low: 'Low — fastest', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max — slowest' };
 
@@ -1982,12 +1986,12 @@ async function renderCodexModels() {
   const effortSel = $('#codexEffort');
   let info;
   try {
-    info = await api.codex.models();
+    info = chatgptMode === 'direct' ? await api.direct.models() : await api.codex.models();
   } catch (_) {
     info = { models: [], efforts: [] };
   }
   const models = info.models || [];
-  const current = settings.codexModel || '';
+  const current = settings[modelKey()] || '';
   const nameOf = (id) => models.find((m) => m.id === id)?.name || id;
   const opts = [`<option value="">Default${info.configModel ? ` (${esc(nameOf(info.configModel))})` : ''}</option>`];
   for (const m of models) {
@@ -1999,7 +2003,7 @@ async function renderCodexModels() {
 
   const chosen = models.find((m) => m.id === (current || info.configModel));
   const efforts = chosen?.efforts?.length ? chosen.efforts : info.efforts || [];
-  const effortNow = settings.codexEffort || '';
+  const effortNow = settings[effortKey()] || '';
   const fallback = info.configEffort || chosen?.defaultEffort;
   effortSel.innerHTML = [
     `<option value="">Default${fallback ? ` (${esc((EFFORT_LABEL[fallback] || fallback).split(' —')[0])})` : ''}</option>`,
@@ -2009,10 +2013,10 @@ async function renderCodexModels() {
 }
 
 $('#codexModel').addEventListener('change', async (e) => {
-  await applySettings({ codexModel: e.target.value || null });
+  await applySettings({ [modelKey()]: e.target.value || null });
   renderCodexModels();
 });
-$('#codexEffort').addEventListener('change', (e) => applySettings({ codexEffort: e.target.value || null }));
+$('#codexEffort').addEventListener('change', (e) => applySettings({ [effortKey()]: e.target.value || null }));
 
 api.codex.onLoginCode(({ url, code, browser }) => {
   codexLoginUrl = url;
@@ -2033,6 +2037,15 @@ async function refreshCodexUi() {
   const status = $('#codexStatus');
   const sign = $('#codexSign');
   const folder = $('#codexFolder');
+  try {
+    chatgptMode = await api.direct.mode();
+  } catch (_) {
+    chatgptMode = 'codex';
+  }
+  const group = status.closest('.set-group');
+  group.dataset.chatgptMode = chatgptMode;
+  $$('#chatgptModePick button').forEach((b) => b.classList.toggle('is-on', b.dataset.value === chatgptMode));
+  if (chatgptMode === 'direct') return refreshDirectUi(status, sign, folder);
   let st;
   try {
     st = await api.codex.status();
@@ -2060,9 +2073,54 @@ async function refreshCodexUi() {
   }
 }
 
+let directState = null;
+
+async function refreshDirectUi(status, sign, folder) {
+  let st;
+  try {
+    st = await api.direct.status();
+  } catch (_) {
+    st = { signedIn: false };
+  }
+  directState = st;
+  $('#codexCode').hidden = true;
+  status.classList.toggle('is-ok', !!(st.signedIn && st.planUsage));
+  status.classList.toggle('is-bad', !!(st.signedIn && !st.planUsage));
+  status.textContent = !st.signedIn
+    ? 'Not signed in. Sign in with your ChatGPT account; answers then use your ChatGPT plan. No Codex install needed.'
+    : st.planUsage
+      ? `Connected as ${st.email || 'your ChatGPT account'}. Answers use your ChatGPT plan; ChatGPT can read (not change) files in the folder below.`
+      : 'Signed in, but using your ChatGPT plan wasn\'t allowed. Sign out and sign in again, and allow it.';
+  sign.hidden = false;
+  sign.textContent = st.signedIn ? 'Sign out' : 'Sign in';
+  sign.disabled = false;
+  const chosen = settings.askFolder;
+  folder.textContent = chosen || 'Home folder';
+  folder.title = `${chosen || 'Your home folder'} — click to change`;
+  if (st.signedIn) renderCodexModels();
+  else {
+    $('#codexModel').innerHTML = '<option value="">Sign in to see models</option>';
+    $('#codexEffort').innerHTML = '<option value="">Default</option>';
+  }
+}
+
 async function codexSignInOut() {
   const sign = $('#codexSign');
   sign.disabled = true;
+  if (chatgptMode === 'direct') {
+    if (directState?.signedIn) {
+      const res = await api.direct.signOut();
+      if (res && !res.revoked) showToast('Signed out here. Also disconnect Sidenote in ChatGPT settings.', null);
+    } else {
+      sign.textContent = 'Finish in browser…';
+      // After a fresh OpenAI log-in the browser can stop on OpenAI's own page.
+      showToast('If the browser stops after you log in, click Sign in again.', null);
+      const res = await api.direct.signIn();
+      if (!res?.ok && res?.error) showToast(res.error.slice(0, 90), null);
+    }
+    refreshCodexUi();
+    return;
+  }
   if (codexState?.signedIn) {
     await api.codex.logout();
   } else {

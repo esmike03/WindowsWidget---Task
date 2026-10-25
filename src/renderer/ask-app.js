@@ -233,9 +233,11 @@ api.onLoginCode(({ code, browser }) => {
 async function signInChatGpt() {
   busy = true;
   showOut({ status: 'Signing in…', working: true, text: '' });
-  el.answer.textContent = 'Opening the ChatGPT sign-in page…';
+  el.answer.textContent = 'Opening the ChatGPT sign-in page in your browser…';
   fit();
-  const res = await api.codexLogin().catch((e) => ({ ok: false, error: e.message }));
+  const mode = await api.chatgptMode().catch(() => 'codex');
+  const login = mode === 'direct' ? api.directSignIn : api.codexLogin;
+  const res = await login().catch((e) => ({ ok: false, error: e.message }));
   busy = false;
   if (res && res.ok) showOut({ status: 'Signed in', text: 'ChatGPT is connected. Ask your question again.' });
   else showOut({ status: 'Failed', error: (res && res.error) || 'Sign-in was not completed.' });
