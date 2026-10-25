@@ -55,7 +55,8 @@ const DEFAULT_SETTINGS = {
   askManage: true, // ChatGPT may add and change Sidenote items
   askAccess: 'read', // read = look only | edit = may also change files in askFolder
   codexPath: null, // optional override when Codex isn't on PATH
-  codexModel: null, // optional Codex model override
+  codexModel: null, // model for Ask; null = whatever Codex's own config uses
+  codexEffort: null, // thinking level: low | medium | high | xhigh | max; null = Codex's
   blurEffect: true, // blurred wallpaper behind the panel
   hardwareAcceleration: false, // GPU rendering roughly doubles memory use for this small window
   askBounds: null, // remembered position of the Ask bar

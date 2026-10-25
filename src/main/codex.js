@@ -18,7 +18,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const { openInLastBrowser } = require('./browser');
+
 const RUN_TIMEOUT_MS = 10 * 60_000;
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const NPM_NATIVE = path.join(
   'node_modules', '@openai', 'codex', 'node_modules', '@openai', 'codex-win32-x64',
   'vendor', 'x86_64-pc-windows-msvc', 'bin', 'codex.exe'
@@ -157,9 +160,15 @@ class Codex {
   async status() {
     const bin = this.bin();
     if (!bin) return { installed: false, signedIn: false, folder: this.folder() };
-    const res = await this.run(bin, ['login', 'status']);
-    const text = `${res.out}\n${res.err}`;
-    const signedIn = res.code === 0 && /logged in/i.test(text);
+    let res = await this.run(bin, ['login', 'status']);
+    let text = `${res.out}\n${res.err}`;
+    // Only an explicit "Not logged in" means signed out; anything else unclear
+    // (a busy auth file, a slow start) gets one more try.
+    if (!(res.code === 0 && /logged in/i.test(text)) && !/not logged in/i.test(text)) {
+      res = await this.run(bin, ['login', 'status']);
+      text = `${res.out}\n${res.err}`;
+    }
+    const signedIn = res.code === 0 && /logged in/i.test(text) && !/not logged in/i.test(text);
     return {
       installed: true,
       signedIn,
@@ -168,27 +177,91 @@ class Codex {
     };
   }
 
-  /** Opens the ChatGPT sign-in page in the browser; resolves when it finishes. */
-  async login() {
+  /**
+   * Signs in with a one-time code. Plain `codex login` always opens Windows'
+   * default browser, so the device-code flow is used instead: Sidenote opens
+   * the sign-in page in the browser the user last had in front, and
+   * `onCode({ url, code, browser })` lets the UI show the code to type there.
+   * Resolves once Codex reports the sign-in finished (or it times out).
+   */
+  async login({ onCode } = {}) {
     const bin = this.bin();
     if (!bin) return { ok: false, error: 'Codex is not installed.' };
     if (this.loginChild) return { ok: false, error: 'A sign-in is already in progress.' };
     const res = await new Promise((resolve) => {
-      const child = spawn(bin.cmd, [...bin.pre, 'login'], {
-        env: { ...process.env, ...bin.env },
+      const child = spawn(bin.cmd, [...bin.pre, 'login', '--device-auth'], {
+        env: { ...process.env, ...bin.env, NO_COLOR: '1' },
         windowsHide: true,
       });
       this.loginChild = child;
-      const timer = setTimeout(() => killTree(child), 5 * 60_000);
+      let text = '';
+      let sent = false;
+      const timer = setTimeout(() => killTree(child), 16 * 60_000); // codes expire after 15 min
+      const scan = (chunk) => {
+        text += String(chunk).replace(/\x1b\[[0-9;]*m/g, '');
+        if (sent) return;
+        const url = /(https:\/\/auth\.openai\.com\/\S*device\S*)/i.exec(text);
+        const code = /\b([A-Z0-9]{4}-[A-Z0-9]{4,6})\b/.exec(text);
+        if (url && code) {
+          sent = true;
+          const browser = openInLastBrowser(url[1]);
+          onCode?.({ url: url[1], code: code[1], browser });
+        }
+      };
+      child.stdout.on('data', scan);
+      child.stderr.on('data', scan);
       child.on('error', (e) => resolve({ code: -1, err: e.message }));
       child.on('close', (code) => {
         clearTimeout(timer);
-        resolve({ code });
+        resolve({ code, err: code ? lastErrorLine(text) || text.trim().split('\n').pop() : '' });
       });
     });
     this.loginChild = null;
     const after = await this.status();
-    return after.signedIn ? { ok: true, status: after } : { ok: false, error: res.err || 'Sign-in was not completed.', status: after };
+    return after.signedIn
+      ? { ok: true, status: after }
+      : { ok: false, error: res.err || 'Sign-in was not completed.', status: after };
+  }
+
+  cancelLogin() {
+    killTree(this.loginChild);
+  }
+
+  /** Codex's home folder, where it keeps its sign-in, config and model list. */
+  home() {
+    return process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  }
+
+  /**
+   * Models this ChatGPT account can use, from the list Codex caches, plus the
+   * model and thinking level Codex uses when Sidenote doesn't pick one.
+   */
+  models() {
+    let list = [];
+    try {
+      const cache = JSON.parse(fs.readFileSync(path.join(this.home(), 'models_cache.json'), 'utf8'));
+      list = (cache.models || [])
+        .filter((m) => m && m.slug && m.visibility !== 'hide')
+        .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
+        .map((m) => ({
+          id: m.slug,
+          name: m.display_name || m.slug,
+          description: m.description || '',
+          efforts: (m.supported_reasoning_levels || []).map((l) => l.effort).filter((e) => EFFORTS.includes(e)),
+          defaultEffort: m.default_reasoning_level || null,
+        }));
+    } catch (_) {
+      /* Codex hasn't fetched the list yet; the picker still offers "default" */
+    }
+    let config = '';
+    try {
+      config = fs.readFileSync(path.join(this.home(), 'config.toml'), 'utf8');
+    } catch (_) {
+      /* no config */
+    }
+    const top = config.split(/^\s*\[/m)[0]; // top-level keys only, not [profiles.*]
+    const read = (key) => (new RegExp(`^\\s*${key}\\s*=\\s*"([^"]+)"`, 'm').exec(top) || [])[1] || null;
+    return { models: list, configModel: read('model'), configEffort: read('model_reasoning_effort'), efforts: EFFORTS };
   }
 
   async logout() {
@@ -233,6 +306,7 @@ class Codex {
       '-C', this.folder(),
     ];
     if (s.codexModel) args.push('-m', String(s.codexModel));
+    if (EFFORTS.includes(s.codexEffort)) args.push('-c', `model_reasoning_effort="${s.codexEffort}"`);
     // Fixed reply shape so Sidenote can apply the changes ChatGPT asks for.
     if (schemaPath) args.push('--output-schema', schemaPath);
     if (this.threadId) args.push('resume', this.threadId);

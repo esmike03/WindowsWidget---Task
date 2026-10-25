@@ -1,4 +1,4 @@
-# Sidenote 1.6.0
+# Sidenote 1.6.1
 
 A small, always-available Windows desktop widget for **notes, tasks and scheduling**.
 It docks flush against the left, right, or top edge of your screen and collapses
@@ -105,7 +105,12 @@ file in here mentions the budget?"*. Follow-up questions continue the same
 conversation until you press **+** (new chat).
 
 - Install once: `npm i -g @openai/codex`, then **Settings → Ask bar · ChatGPT →
-  Sign in** (finishes in your browser).
+  Sign in**. The sign-in page opens in the browser you used last (the one whose
+  window was most recently in front), not just the Windows default. Sidenote
+  shows a one-time code to type there; click it to copy.
+- **Model** and **Thinking**: pick any model your ChatGPT plan offers, and how
+  long it thinks. *Default* follows Codex's own settings. Lower thinking replies
+  faster, which suits quick widget questions.
 - **Folder**: where ChatGPT starts working (your home folder by default).
 - **File access**: *Read only* (default) lets it read files and run read-only
   commands. *Can edit* also lets it change files inside that folder.
@@ -320,6 +325,7 @@ src/main/ask.js      floating Ask bar and idle host lifecycle
 src/main/backdrop.js blurred-wallpaper blur effect
 src/main/assistant.js ChatGPT ↔ Sidenote: context snapshot, actions, undo
 src/main/voice.js    Windows voice typing trigger (Win+H via koffi)
+src/main/browser.js  open a page in the last-used browser
 src/main/codex.js    ChatGPT through the Codex CLI (sign-in, folder, access, follow-ups)
 src/main/capture.js  floating quick-capture window and persistence bridge
 src/preload.js       contextBridge API surface
