@@ -15,6 +15,8 @@ const WIN_MAX_H = 480;
 const MAX_CAPTURE_W = 1920;
 
 const CAPTURE_HIDE_MS = 180; // let the compositor drop our own window first
+const HOST_IDLE_MS = 120_000;
+const BAR_IDLE_MS = 120_000;
 
 class Ask {
   /**
@@ -34,6 +36,8 @@ class Ask {
     this.win = null;
     this.host = null; // offscreen window that actually drives the chat pages
     this.hostReady = null;
+    this.hostIdleTimer = null;
+    this.barIdleTimer = null;
     this.pending = new Map(); // requestId -> { resolve, timer }
     this.seq = 0;
     this.anchor = null; // top-left of the input bar, independent of reply direction
@@ -48,7 +52,10 @@ class Ask {
    * webviews meant forcing the panel open on every question.
    */
   ensureHost() {
-    if (this.host && !this.host.isDestroyed()) return this.hostReady;
+    if (this.host && !this.host.isDestroyed()) {
+      this.wakeHost();
+      return this.hostReady;
+    }
 
     this.host = new BrowserWindow({
       width: 1120,
@@ -63,18 +70,21 @@ class Ask {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
-        backgroundThrottling: false,
+        backgroundThrottling: true,
         spellcheck: false,
         webviewTag: true,
       },
     });
 
     this.host.setMenu(null);
+    this.wakeHost();
     if (typeof this.harden === 'function') this.harden(this.host.webContents);
     this.host.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     this.host.on('closed', () => {
       this.host = null;
       this.hostReady = null;
+      clearTimeout(this.hostIdleTimer);
+      this.hostIdleTimer = null;
     });
 
     this.hostReady = new Promise((resolve) => {
@@ -84,6 +94,30 @@ class Ask {
 
     this.host.loadFile(path.join(this.root, 'src', 'renderer', 'askhost.html'));
     return this.hostReady;
+  }
+
+  wakeHost() {
+    clearTimeout(this.hostIdleTimer);
+    this.hostIdleTimer = null;
+    if (this.host && !this.host.isDestroyed()) {
+      this.host.webContents.setBackgroundThrottling(false);
+    }
+  }
+
+  restHost() {
+    if (!this.host || this.host.isDestroyed() || this.pending.size) return;
+    this.host.webContents.setBackgroundThrottling(true);
+    clearTimeout(this.hostIdleTimer);
+    this.hostIdleTimer = setTimeout(() => this.destroyHost(), HOST_IDLE_MS);
+  }
+
+  destroyHost() {
+    if (this.pending.size) return;
+    clearTimeout(this.hostIdleTimer);
+    this.hostIdleTimer = null;
+    if (this.host && !this.host.isDestroyed()) this.host.destroy();
+    this.host = null;
+    this.hostReady = null;
   }
 
   /* ── window ────────────────────────────────────────────────────────── */
@@ -120,7 +154,7 @@ class Ask {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
-        backgroundThrottling: false,
+        backgroundThrottling: true,
         spellcheck: false,
       },
     });
@@ -134,6 +168,8 @@ class Ask {
     this.win.on('moved', () => this.rememberPosition());
     this.win.on('closed', () => {
       this.win = null;
+      clearTimeout(this.barIdleTimer);
+      this.barIdleTimer = null;
     });
     this.win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     this.win.webContents.on('will-navigate', (e) => e.preventDefault());
@@ -171,6 +207,8 @@ class Ask {
   }
 
   show() {
+    clearTimeout(this.barIdleTimer);
+    this.barIdleTimer = null;
     const win = this.create();
     win.show();
     win.focus();
@@ -178,7 +216,12 @@ class Ask {
   }
 
   hide() {
-    if (this.win && !this.win.isDestroyed() && this.win.isVisible()) this.win.hide();
+    if (!this.win || this.win.isDestroyed()) return;
+    if (this.win.isVisible()) this.win.hide();
+    clearTimeout(this.barIdleTimer);
+    this.barIdleTimer = setTimeout(() => {
+      if (this.win && !this.win.isDestroyed() && !this.win.isVisible()) this.win.destroy();
+    }, BAR_IDLE_MS);
   }
 
   toggle() {
@@ -275,6 +318,7 @@ class Ask {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         resolve({ ok: false, error: 'Timed out waiting for a reply.' });
+        this.restHost();
       }, timeoutMs);
       this.pending.set(id, { resolve, timer });
       this.host.webContents.send('ask:run', { id, ...payload });
@@ -287,6 +331,7 @@ class Ask {
     clearTimeout(entry.timer);
     this.pending.delete(id);
     entry.resolve(result);
+    this.restHost();
   }
 
   /** Progress notes from the pane ("uploading", "waiting for a reply"...). */
@@ -341,6 +386,8 @@ class Ask {
   }
 
   destroy() {
+    clearTimeout(this.hostIdleTimer);
+    clearTimeout(this.barIdleTimer);
     for (const { timer } of this.pending.values()) clearTimeout(timer);
     this.pending.clear();
     if (this.win && !this.win.isDestroyed()) this.win.destroy();

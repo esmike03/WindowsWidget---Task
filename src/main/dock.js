@@ -11,18 +11,34 @@ const PANEL_W = 344;
 const PANEL_AI_W = 520;
 const PANEL_H = 620;
 const PANEL_MIN_H = 320;
-const TAB_W = 30;
-const TAB_H = 148;
+// The collapsed edge tab, in three sizes the user picks between. It sits on top
+// of every other window all day, so the default is deliberately slim — `large`
+// is the size Sidenote shipped with before the setting existed.
+const TAB_SIZES = {
+  small: { w: 20, h: 72 },
+  medium: { w: 24, h: 96 },
+  large: { w: 30, h: 148 },
+};
+const DEFAULT_TAB_SIZE = 'medium';
 const GUTTER = 22;
 
 const ANIM_MS = 320;
 
-const COLLAPSED_W = TAB_W + GUTTER;
-const COLLAPSED_H = TAB_H + GUTTER * 2;
+// The smallest collapsed window any size can produce, so the BrowserWindow
+// minimums never fight the layout — including at the top edge, where the tab
+// lies on its side and the window is shorter than it is wide.
+const COLLAPSED_MIN = TAB_SIZES.small.w + GUTTER;
+
+const EDGES = ['left', 'right', 'top'];
 
 const easeInOutQuint = (t) =>
   t < 0.5 ? 16 * t * t * t * t * t : 1 - Math.pow(-2 * t + 2, 5) / 2;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const normalizeEdge = (edge) => (EDGES.includes(edge) ? edge : 'right');
+const tabSizeFor = (name) =>
+  Object.prototype.hasOwnProperty.call(TAB_SIZES, name)
+    ? TAB_SIZES[name]
+    : TAB_SIZES[DEFAULT_TAB_SIZE];
 
 function displaysByPosition() {
   return screen.getAllDisplays().slice().sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
@@ -34,34 +50,60 @@ function resolveDisplay(displayId) {
   return match || screen.getPrimaryDisplay();
 }
 
-/** Panel height that actually fits on the given display. */
-function panelHeightFor(display) {
-  const usable = display.workArea.height - GUTTER * 2;
+/**
+ * Panel height that actually fits on the given display. Docked to a side the
+ * panel is centred and needs a gutter above *and* below; docked to the top it
+ * is flush with the edge, so only the bottom gutter is spent.
+ */
+function panelHeightFor(display, edge) {
+  const gutters = edge === 'top' ? GUTTER : GUTTER * 2;
+  const usable = display.workArea.height - gutters;
   return Math.round(clamp(PANEL_H, PANEL_MIN_H, Math.max(PANEL_MIN_H, usable)));
 }
 
 /** Panel width for the current mode, never wider than the display allows. */
-function panelWidthFor(display, aiOpen) {
+function panelWidthFor(display, aiOpen, edge) {
   if (!aiOpen) return PANEL_W;
-  const usable = display.workArea.width - GUTTER - 40;
+  const reserve = edge === 'top' ? GUTTER * 2 + 40 : GUTTER + 40;
+  const usable = display.workArea.width - reserve;
   return Math.round(clamp(PANEL_AI_W, PANEL_W, Math.max(PANEL_W, usable)));
 }
 
 /**
  * Window rect for a given state. Expanded and collapsed rects share the same
- * outer edge and the same vertical centre, so a straight lerp between them
- * reads as the panel sliding into / out of the edge tab.
+ * outer edge and the same centre *along* that edge, so a straight lerp between
+ * them reads as the panel sliding into / out of the edge tab.
+ *
+ * `anchor` is always the position along the docked edge: vertical for the left
+ * and right edges, horizontal for the top one.
  */
-function boundsFor(display, { edge, anchor, collapsed, aiOpen }) {
+function boundsFor(display, { edge: rawEdge, anchor, collapsed, aiOpen, tabSize }) {
+  const edge = normalizeEdge(rawEdge);
   const wa = display.workArea;
-  const panelH = panelHeightFor(display);
+  const along = clamp(anchor, 0, 1);
+  const panelW = panelWidthFor(display, aiOpen, edge);
+  const panelH = panelHeightFor(display, edge);
 
-  const width = collapsed ? COLLAPSED_W : panelWidthFor(display, aiOpen) + GUTTER;
-  const height = collapsed ? COLLAPSED_H : panelH + GUTTER * 2;
+  // Collapsed, the window is the tab plus a gutter on its inner side and both
+  // ends: `deep` across the edge, `long` along it.
+  const tab = tabSizeFor(tabSize);
+  const deep = tab.w + GUTTER;
+  const long = tab.h + GUTTER * 2;
+
+  if (edge === 'top') {
+    // The tab lies on its side up here: long horizontally, deep vertically.
+    const width = collapsed ? long : panelW + GUTTER * 2;
+    const height = collapsed ? deep : panelH + GUTTER;
+    const centre = wa.x + along * wa.width;
+    const x = Math.round(clamp(centre - width / 2, wa.x, wa.x + wa.width - width));
+    return { x, y: Math.round(wa.y), width, height };
+  }
+
+  const width = collapsed ? deep : panelW + GUTTER;
+  const height = collapsed ? long : panelH + GUTTER * 2;
 
   const x = edge === 'left' ? wa.x : wa.x + wa.width - width;
-
-  const centre = wa.y + clamp(anchor, 0, 1) * wa.height;
+  const centre = wa.y + along * wa.height;
   const y = Math.round(clamp(centre - height / 2, wa.y, wa.y + wa.height - height));
 
   return { x: Math.round(x), y, width, height };
@@ -77,7 +119,18 @@ class Dock {
 
   get state() {
     const s = this.settings.get();
-    return { edge: s.edge, anchor: s.anchor, collapsed: s.collapsed, aiOpen: s.aiOpen };
+    return {
+      edge: normalizeEdge(s.edge),
+      anchor: s.anchor,
+      collapsed: s.collapsed,
+      aiOpen: s.aiOpen,
+      tabSize: s.tabSize,
+    };
+  }
+
+  /** Tray-only: collapsing means hiding the window, not showing an edge tab. */
+  get trayOnly() {
+    return this.settings.get().trayOnly === true;
   }
 
   display() {
@@ -87,14 +140,17 @@ class Dock {
   /** Geometry the renderer needs to size its fixed-width content layer. */
   metrics() {
     const s = this.settings.get();
+    const edge = normalizeEdge(s.edge);
+    const tab = tabSizeFor(s.tabSize);
     return {
-      edge: s.edge,
+      edge,
       collapsed: s.collapsed,
+      trayOnly: this.trayOnly,
       aiOpen: !!s.aiOpen,
-      panelW: panelWidthFor(this.display(), s.aiOpen),
-      panelH: panelHeightFor(this.display()),
-      tabW: TAB_W,
-      tabH: TAB_H,
+      panelW: panelWidthFor(this.display(), s.aiOpen, edge),
+      panelH: panelHeightFor(this.display(), edge),
+      tabW: tab.w,
+      tabH: tab.h,
       gutter: GUTTER,
       animMs: ANIM_MS,
       displayCount: screen.getAllDisplays().length,
@@ -119,7 +175,39 @@ class Dock {
   setCollapsed(collapsed, { animate = true } = {}) {
     if (this.settings.get().collapsed === collapsed) return;
     this.settings.set({ collapsed });
+
+    // In tray-only mode there is no edge tab to slide into, so there is nothing
+    // to animate — the window simply leaves the screen and comes back.
+    if (this.trayOnly) {
+      this._stopAnim();
+      this.emit();
+      if (this.win.isDestroyed()) return;
+      if (collapsed) this.win.hide();
+      else {
+        this.win.setBounds(boundsFor(this.display(), this.state));
+        this.win.show();
+      }
+      return;
+    }
+
     this.layout({ animate });
+  }
+
+  /**
+   * Re-apply visibility after the tray-only setting is flipped: switching it on
+   * while collapsed must hide the tab that is already on screen, and switching
+   * it off while hidden must bring that tab back.
+   */
+  syncTrayOnly() {
+    if (this.win.isDestroyed()) return;
+    this._stopAnim();
+    if (this.trayOnly && this.settings.get().collapsed) {
+      this.emit();
+      this.win.hide();
+      return;
+    }
+    this.layout({ animate: false });
+    this.win.show();
   }
 
   toggle() {
@@ -134,7 +222,7 @@ class Dock {
   }
 
   setEdge(edge) {
-    if (edge !== 'left' && edge !== 'right') return;
+    if (!EDGES.includes(edge) || this.settings.get().edge === edge) return;
     this.settings.set({ edge });
     this.layout({ animate: true });
   }
@@ -223,9 +311,19 @@ class Dock {
     });
     const wa = display.workArea;
 
-    // Nearest vertical edge of whichever monitor we were dropped on.
-    const edge = centreX - wa.x < wa.width / 2 ? 'left' : 'right';
-    const anchor = clamp((centreY - wa.y) / wa.height, 0.05, 0.95);
+    // Nearest dockable edge of whichever monitor we were dropped on, measured
+    // from the window's own rect rather than its centre — a tall panel dropped
+    // at the top of the screen still has its centre halfway down.
+    const gaps = {
+      left: b.x - wa.x,
+      right: wa.x + wa.width - (b.x + b.width),
+      top: b.y - wa.y,
+    };
+    const edge = EDGES.reduce((best, e) => (gaps[e] < gaps[best] ? e : best), 'right');
+
+    const along =
+      edge === 'top' ? (centreX - wa.x) / wa.width : (centreY - wa.y) / wa.height;
+    const anchor = clamp(along, 0.05, 0.95);
 
     this.settings.set({ edge, anchor, displayId: String(display.id) });
     this.layout({ animate: true });
@@ -234,13 +332,15 @@ class Dock {
 
 module.exports = {
   Dock,
+  EDGES,
+  TAB_SIZES,
+  DEFAULT_TAB_SIZE,
+  normalizeEdge,
+  tabSizeFor,
   PANEL_W,
   PANEL_AI_W,
   PANEL_H,
-  TAB_W,
-  TAB_H,
   GUTTER,
-  COLLAPSED_W,
-  COLLAPSED_H,
+  COLLAPSED_MIN,
   ANIM_MS,
 };

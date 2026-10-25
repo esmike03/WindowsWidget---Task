@@ -2,7 +2,7 @@
 
 /* ═══════════════════════════════════════════════════════════════════════
    Sidenote renderer
-   Item = { id, kind:'event'|'task', title, at:number|null, done, doneAt,
+   Item = { id, kind:'event'|'task'|'note', title, content, checklist, at:number|null, done, doneAt,
             archived, archivedAt, createdAt, notified }
    Link = { id, url, title, category:string, createdAt }
    ═══════════════════════════════════════════════════════════════════════ */
@@ -15,6 +15,7 @@ const el = {
   html: document.documentElement,
   tab: $('#tab'),
   tabBadge: $('#tabBadge'),
+  collapseBtn: $('[data-act="collapse"]'),
   panel: $('#panel'),
   grip: $('#grip'),
   weekday: $('#hWeekday'),
@@ -23,6 +24,7 @@ const el = {
   seg: $('#seg'),
   cSchedule: $('#cSchedule'),
   cNotes: $('#cNotes'),
+  cTasks: $('#cTasks'),
   cLinks: $('#cLinks'),
   scroller: $('#scroller'),
   list: $('#list'),
@@ -69,39 +71,121 @@ const el = {
   slotUrl: $('#slotUrl'),
   slotMsg: $('#slotMsg'),
   mailPick: $('#mailPick'),
+  noteEditor: $('#noteEditor'),
+  noteEditorHeading: $('#noteEditorHeading'),
+  noteTitle: $('#noteTitle'),
+  noteContent: $('#noteContent'),
+  noteDropzone: $('#noteDropzone'),
+  noteChecklist: $('#noteChecklist'),
+  noteFontSize: $('#noteFontSize'),
+  noteHighlightMenu: $('#noteHighlightMenu'),
+  noteImageInput: $('#noteImageInput'),
+  noteStatus: $('#noteStatus'),
 };
 
-let data = { version: 1, items: [], links: [] };
+let data = { version: 3, items: [], links: [] };
 let settings = {};
 let view = 'schedule';
 let manualWhen = null; // { at: number|null } — overrides text parsing until submit
 let manualCat = null; // string | '' (unsorted) | null — same idea for link categories
 let editingId = null;
 let seenIds = new Set();
+let noteEditingId = null;
+let noteSelection = null;
+let noteUndoStack = [];
+let noteUndoBytes = 0;
+let noteUndoStamp = { at: 0, key: '' };
+let restoringNote = false;
+let noteObservedSnapshot = null;
+let noteBeforeInputRecorded = false;
 
 const COMPLETE_DELAY = 1500; // strike-through dwell before the item leaves
+const NOTE_UNDO_LIMIT_BYTES = 4 * 1024 * 1024;
+const NOTE_UNDO_LIMIT_STEPS = 40;
 const pending = new Map(); // id -> { timer, prevKind }
 let toastTimer = null;
 let undoAction = null;
 
-const DAY = 86_400_000;
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-const WEEKDAYS = {
-  sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tues: 2, tuesday: 2,
-  wed: 3, weds: 3, wednesday: 3, thu: 4, thur: 4, thurs: 4, thursday: 4,
-  fri: 5, friday: 5, sat: 6, saturday: 6,
-};
+// Date parsing is shared with the quick-capture bar — see parse.js, loaded
+// ahead of this script.
+const { parseWhen, startOfDay, DAY } = window.SidenoteParse;
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-const startOfDay = (ms) => {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-};
 const esc = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/**
+ * Notes are stored as a deliberately small HTML subset. This keeps formatting
+ * useful while preventing pasted markup from turning into executable UI.
+ */
+function sanitizeNoteHtml(raw) {
+  const template = document.createElement('template');
+  template.innerHTML = String(raw || '');
+  const allowed = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'BR', 'DIV', 'P', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'MARK', 'FONT', 'IMG']);
+
+  // Attributes needed by the allowed nodes must be captured before the blanket
+  // removal above.
+  for (const img of template.content.querySelectorAll('img')) img.dataset.safeSrc = img.getAttribute('src') || '';
+  for (const font of template.content.querySelectorAll('font')) font.dataset.safeSize = font.getAttribute('size') || '3';
+  for (const mark of template.content.querySelectorAll('mark')) mark.dataset.safeClass = mark.className || 'hl-yellow';
+
+  const cleanWithSavedAttrs = (root) => {
+    for (const node of Array.from(root.childNodes)) {
+      if (node.nodeType === Node.COMMENT_NODE) {
+        node.remove();
+        continue;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      cleanWithSavedAttrs(node);
+      if (!allowed.has(node.tagName)) {
+        node.replaceWith(...node.childNodes);
+        continue;
+      }
+      const src = node.dataset.safeSrc;
+      const size = node.dataset.safeSize;
+      const markClass = node.dataset.safeClass;
+      for (const attr of Array.from(node.attributes)) node.removeAttribute(attr.name);
+      if (node.tagName === 'IMG') {
+        if (!/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(src || '')) {
+          node.remove();
+          continue;
+        }
+        node.setAttribute('src', src);
+        node.setAttribute('alt', 'Note image');
+      } else if (node.tagName === 'FONT') {
+        node.setAttribute('size', String(Math.max(1, Math.min(7, Number(size) || 3))));
+      } else if (node.tagName === 'MARK') {
+        const color = ['yellow', 'mint', 'blue', 'pink'].find((name) => markClass === `hl-${name}`) || 'yellow';
+        node.className = `hl-${color}`;
+      }
+    }
+  };
+  cleanWithSavedAttrs(template.content);
+  return template.innerHTML;
+}
+
+function noteSummary(html) {
+  const box = document.createElement('div');
+  box.innerHTML = sanitizeNoteHtml(html);
+  return {
+    text: (box.textContent || '').replace(/\s+/g, ' ').trim(),
+    images: box.querySelectorAll('img').length,
+  };
+}
+
+const notePlainText = (html) => noteSummary(html).text;
+const noteSummaryCache = new Map();
+
+function cachedNoteSummary(note) {
+  const stamp = `${note.updatedAt || note.createdAt || 0}:${String(note.content || '').length}`;
+  const cached = noteSummaryCache.get(note.id);
+  if (cached?.stamp === stamp) return cached.summary;
+  const summary = noteSummary(note.content);
+  noteSummaryCache.set(note.id, { stamp, summary });
+  return summary;
+}
 
 // 2-digit hours keep the clock column the same width on every row.
 const fmtTime = (ms) =>
@@ -125,140 +209,6 @@ function toLocalInput(ms) {
   const d = new Date(ms);
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
-/* ── natural-language date parsing ───────────────────────────────────── */
-
-/**
- * Pulls a date and/or a time out of free text and returns the remaining
- * title. Deliberately conservative: if nothing looks like a date we return
- * `at: null` rather than guessing.
- */
-function parseWhen(raw) {
-  let s = ` ${raw} `;
-  const now = new Date();
-  let dayMs = null;
-  let time = null; // { h, m }
-  let relMs = null;
-
-  const cut = (m) => {
-    s = `${s.slice(0, m.index)} ${s.slice(m.index + m[0].length)}`;
-  };
-  const take = (re) => {
-    const m = s.match(re);
-    if (m) cut(m);
-    return m;
-  };
-
-  // "in 30m" / "in 2 hours" / "in 3 days"
-  const rel = take(/\bin\s+(\d{1,3})\s*(m|mins?|minutes?|h|hrs?|hours?|d|days?|w|weeks?)\b/i);
-  if (rel) {
-    const n = parseInt(rel[1], 10);
-    const u = rel[2].toLowerCase()[0];
-    const mult = u === 'm' ? 60_000 : u === 'h' ? 3_600_000 : u === 'd' ? DAY : DAY * 7;
-    relMs = Date.now() + n * mult;
-  }
-
-  if (relMs === null) {
-    // today / tonight / tomorrow / yesterday
-    const kw = take(/\b(today|tonight|tomorrow|tmrw?|yesterday)\b/i);
-    if (kw) {
-      const k = kw[1].toLowerCase();
-      const base = startOfDay(Date.now());
-      if (k === 'today') dayMs = base;
-      else if (k === 'tonight') {
-        dayMs = base;
-        time = { h: 20, m: 0 };
-      } else if (k === 'yesterday') dayMs = base - DAY;
-      else dayMs = base + DAY;
-    }
-
-    // weekday, optionally "next monday"
-    if (dayMs === null) {
-      const wd = take(/\b(next\s+|this\s+)?(sunday|monday|tuesday|wednesday|thursday|thurs|thur|saturday|sun|mon|tues|tue|wed|weds|thu|fri(?:day)?|sat)\b/i);
-      if (wd) {
-        const target = WEEKDAYS[wd[2].toLowerCase()];
-        if (target !== undefined) {
-          const base = startOfDay(Date.now());
-          let delta = (target - new Date(base).getDay() + 7) % 7;
-          if (delta === 0) delta = 7; // "monday" on a Monday means the next one
-          if (/next/i.test(wd[1] || '') && delta < 7) delta += 0;
-          dayMs = base + delta * DAY;
-        }
-      }
-    }
-
-    // "jul 28" / "28 jul" / "7/28" / "7/28/2026"
-    if (dayMs === null) {
-      const mon = `(${MONTHS.join('|')})[a-z]*`;
-      const md = take(new RegExp(`\\b${mon}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, 'i'));
-      const dm = md ? null : take(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+${mon}\\.?\\b`, 'i'));
-      const slash = md || dm ? null : take(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
-
-      let month = null;
-      let dayNum = null;
-      let year = now.getFullYear();
-      if (md) {
-        month = MONTHS.indexOf(md[1].toLowerCase().slice(0, 3));
-        dayNum = parseInt(md[2], 10);
-      } else if (dm) {
-        month = MONTHS.indexOf(dm[2].toLowerCase().slice(0, 3));
-        dayNum = parseInt(dm[1], 10);
-      } else if (slash) {
-        month = parseInt(slash[1], 10) - 1;
-        dayNum = parseInt(slash[2], 10);
-        if (slash[3]) year = slash[3].length === 2 ? 2000 + parseInt(slash[3], 10) : parseInt(slash[3], 10);
-      }
-      if (month !== null && month >= 0 && dayNum >= 1 && dayNum <= 31) {
-        let d = new Date(year, month, dayNum, 0, 0, 0, 0);
-        // A bare day/month that already passed almost always means next year.
-        if (!(md && md[3]) && !(slash && slash[3]) && d.getTime() < startOfDay(Date.now())) {
-          d = new Date(year + 1, month, dayNum, 0, 0, 0, 0);
-        }
-        dayMs = d.getTime();
-      }
-    }
-  }
-
-  // time of day
-  if (!time) {
-    const noon = take(/\b(noon|midday|midnight)\b/i);
-    if (noon) time = /midnight/i.test(noon[1]) ? { h: 0, m: 0 } : { h: 12, m: 0 };
-  }
-  if (!time) {
-    const ampm = take(/\b(?:at\s+|@\s*)?(\d{1,2})(?::([0-5]\d))?\s*([ap])\.?m\.?\b/i);
-    if (ampm) {
-      let h = parseInt(ampm[1], 10) % 12;
-      if (ampm[3].toLowerCase() === 'p') h += 12;
-      time = { h, m: ampm[2] ? parseInt(ampm[2], 10) : 0 };
-    }
-  }
-  if (!time) {
-    const h24 = take(/\b(?:at\s+|@\s*)?([01]?\d|2[0-3]):([0-5]\d)\b/);
-    if (h24) time = { h: parseInt(h24[1], 10), m: parseInt(h24[2], 10) };
-  }
-
-  // assemble
-  let at = null;
-  if (relMs !== null) {
-    at = relMs;
-  } else if (dayMs !== null || time) {
-    const base = new Date(dayMs !== null ? dayMs : startOfDay(Date.now()));
-    base.setHours(time ? time.h : 9, time ? time.m : 0, 0, 0);
-    // A bare time that already passed today means tomorrow.
-    if (dayMs === null && time && base.getTime() < Date.now() - 60_000) {
-      base.setTime(base.getTime() + DAY);
-    }
-    at = base.getTime();
-  }
-
-  const title = s
-    .replace(/\s+/g, ' ')
-    .replace(/\s*[,;]\s*$/, '')
-    .replace(/\b(on|at|by|from)\s*$/i, '')
-    .trim();
-
-  return { title, at };
 }
 
 /* ── link parsing ────────────────────────────────────────────────────── */
@@ -371,6 +321,19 @@ function save() {
   saveTimer = setTimeout(() => api.data.save(data), 180);
 }
 
+/**
+ * An item saved from the floating quick-capture bar. The main process has
+ * already written it; we mirror it into our copy so the next full save from
+ * this window doesn't overwrite it back out of existence.
+ */
+api.data.onAdded((item) => {
+  if (!item || !item.id || find(item.id)) return;
+  data.items.push(item);
+  renderCounts();
+  renderHeader();
+  renderList();
+});
+
 const items = () => data.items;
 const find = (id) => data.items.find((i) => i.id === id);
 const live = (kind) => data.items.filter((i) => i.kind === kind && !i.archived);
@@ -477,6 +440,40 @@ function itemHtml(item, nextId) {
   </article>`;
 }
 
+function noteHtml(note) {
+  const cls = ['item', 'is-note'];
+  if (!seenIds.has(note.id)) cls.push('entering');
+  seenIds.add(note.id);
+
+  const checklist = Array.isArray(note.checklist) ? note.checklist : [];
+  const checked = checklist.filter((entry) => entry.done).length;
+  const summary = cachedNoteSummary(note);
+  const preview = summary.text;
+  const imageCount = summary.images;
+  const details = [];
+  if (checklist.length) details.push(`${checked}/${checklist.length} checked`);
+  if (imageCount) details.push(`${imageCount} image${imageCount === 1 ? '' : 's'}`);
+  details.push(`Edited ${relative(note.updatedAt || note.createdAt)}`);
+
+  return `<article class="${cls.join(' ')}" data-id="${note.id}" tabindex="0">
+    <span class="note-card-icon" aria-hidden="true">${ICON('i-note')}</span>
+    <div class="body">
+      <div class="row1"><span class="title">${esc(note.title || 'Untitled note')}</span></div>
+      <div class="note-preview">${esc(preview || (checklist.length ? 'Checklist note' : 'Empty note'))}</div>
+      <div class="meta note-card-meta">${esc(details.join(' · '))}</div>
+      ${
+        checklist.length
+          ? `<div class="note-progress"><i data-done="${checked}" data-total="${checklist.length}"></i></div>`
+          : ''
+      }
+    </div>
+    <div class="acts">
+      <button data-act="edit" title="Open note">${ICON('i-pencil')}</button>
+      <button data-act="del" title="Delete">${ICON('i-trash')}</button>
+    </div>
+  </article>`;
+}
+
 function linkHtml(link) {
   const cls = ['item', 'is-link'];
   if (!seenIds.has(link.id)) cls.push('entering');
@@ -557,6 +554,24 @@ function renderList() {
   if (view === 'links') return renderLinks();
   $('.empty svg use', el.empty)?.setAttribute('href', '#i-inbox');
 
+  if (view === 'notes') {
+    const list = live('note').sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+    el.list.innerHTML = list.map(noteHtml).join('');
+    $$('.note-progress i', el.list).forEach((bar) => {
+      const total = Number(bar.dataset.total) || 0;
+      const done = Number(bar.dataset.done) || 0;
+      bar.style.setProperty('--note-progress', `${total ? (done / total) * 100 : 0}%`);
+    });
+    el.empty.hidden = list.length > 0;
+    if (!list.length) {
+      $('.empty-t', el.empty).textContent = 'No notes yet';
+      $('.empty-s', el.empty).textContent = 'Create a note with rich text, checklists, highlights and images.';
+      $('.empty svg use', el.empty)?.setAttribute('href', '#i-note');
+    }
+    renderCounts();
+    return;
+  }
+
   const kind = view === 'schedule' ? 'event' : 'task';
   const list = live(kind);
   const nextId = nextUpId(list);
@@ -573,11 +588,11 @@ function renderList() {
   const isEmpty = list.length === 0;
   el.empty.hidden = !isEmpty;
   if (isEmpty) {
-    $('.empty-t', el.empty).textContent = view === 'schedule' ? 'No events scheduled' : 'No notes yet';
+    $('.empty-t', el.empty).textContent = view === 'schedule' ? 'No events scheduled' : 'No tasks yet';
     $('.empty-s', el.empty).textContent =
       view === 'schedule'
         ? 'Add a meeting below — try “review tomorrow 2pm”.'
-        : 'Jot a task below. Completed ones move to the archive.';
+        : 'Add a task below. A due date is optional.';
   }
 
   if (editingId) {
@@ -592,18 +607,23 @@ function renderList() {
 
 function renderCounts() {
   const ev = live('event').filter((i) => !i.done).length;
+  const nt = live('note').length;
   const tk = live('task').filter((i) => !i.done).length;
   const lk = links().length;
   el.cSchedule.textContent = ev;
-  el.cNotes.textContent = tk;
+  el.cNotes.textContent = nt;
+  el.cTasks.textContent = tk;
   el.cLinks.textContent = lk;
   el.cSchedule.classList.toggle('is-zero', ev === 0);
-  el.cNotes.classList.toggle('is-zero', tk === 0);
+  el.cNotes.classList.toggle('is-zero', nt === 0);
+  el.cTasks.classList.toggle('is-zero', tk === 0);
   el.cLinks.classList.toggle('is-zero', lk === 0);
 
   // Tab badge counts what actually needs attention today.
   const soon = startOfDay(Date.now()) + DAY;
-  const due = items().filter((i) => !i.archived && !i.done && i.at != null && i.at < soon).length;
+  const due = items().filter(
+    (i) => (i.kind === 'event' || i.kind === 'task') && !i.archived && !i.done && i.at != null && i.at < soon
+  ).length;
   el.tabBadge.hidden = due === 0;
   el.tabBadge.textContent = due > 99 ? '99+' : String(due);
 }
@@ -614,9 +634,23 @@ function renderHeader() {
   el.date.textContent = now.toLocaleDateString([], { day: 'numeric', month: 'short' });
 
   const upcoming = items()
-    .filter((i) => !i.archived && !i.done && i.at != null && i.at >= Date.now() - 60_000)
+    .filter(
+      (i) =>
+        (i.kind === 'event' || i.kind === 'task') &&
+        !i.archived &&
+        !i.done &&
+        i.at != null &&
+        i.at >= Date.now() - 60_000
+    )
     .sort((a, b) => a.at - b.at)[0];
-  const overdue = items().filter((i) => !i.archived && !i.done && i.at != null && i.at < Date.now()).length;
+  const overdue = items().filter(
+    (i) =>
+      (i.kind === 'event' || i.kind === 'task') &&
+      !i.archived &&
+      !i.done &&
+      i.at != null &&
+      i.at < Date.now()
+  ).length;
 
   if (overdue) el.sub.textContent = `${overdue} overdue`;
   else if (upcoming) el.sub.textContent = `Next · ${upcoming.title} ${relative(upcoming.at)}`;
@@ -631,14 +665,14 @@ function renderArchive() {
   if (!list.length) {
     el.archiveList.innerHTML = `<div class="empty">${ICON('i-archive')}
       <p class="empty-t">Archive is empty</p>
-      <p class="empty-s">Completed events and notes land here.</p></div>`;
+      <p class="empty-s">Completed events and tasks land here.</p></div>`;
     return;
   }
 
   el.archiveList.innerHTML = list
     .map(
       (i) => `<div class="arc-item" data-id="${i.id}">
-      <span class="arc-kind">${ICON(i.kind === 'event' ? 'i-calendar' : 'i-check')}</span>
+      <span class="arc-kind">${ICON(i.kind === 'event' ? 'i-calendar' : i.kind === 'task' ? 'i-check' : 'i-note')}</span>
       <div class="body">
         <div class="row1"><span class="title">${esc(i.title)}</span></div>
         <div class="meta">${esc(i.at != null ? fmtTime(i.at) + ' · ' : '')}${esc(
@@ -680,6 +714,445 @@ function addItem(title, at) {
   renderAll();
   el.scroller.scrollTo({ top: 0, behavior: 'smooth' });
 }
+
+/* ── rich note editor ───────────────────────────────────────────────────── */
+
+function readNoteChecklist() {
+  return $$('.note-check-row', el.noteChecklist).map((row) => ({
+    id: row.dataset.id || uid(),
+    text: $('.note-check-text', row)?.value.trim() || '',
+    done: !!$('.note-check-toggle', row)?.checked,
+  }));
+}
+
+function noteEditorSnapshot() {
+  return {
+    title: el.noteTitle.value,
+    content: el.noteContent.innerHTML,
+    checklist: readNoteChecklist(),
+  };
+}
+
+function syncNoteObservedState() {
+  noteObservedSnapshot = noteEditorSnapshot();
+}
+
+function renderNoteChecklist(checklist = []) {
+  el.noteChecklist.innerHTML = checklist
+    .map(
+      (entry) => `<div class="note-check-row${entry.done ? ' is-done' : ''}" data-id="${esc(entry.id || uid())}">
+        <label class="note-check-box" title="Toggle item">
+          <input class="note-check-toggle" type="checkbox"${entry.done ? ' checked' : ''} />
+          <i>${ICON('i-check')}</i>
+        </label>
+        <input class="note-check-text" type="text" maxlength="240" value="${esc(entry.text || '')}" placeholder="Checklist item" />
+        <button type="button" data-note-act="remove-check" title="Remove item">${ICON('i-x')}</button>
+      </div>`
+    )
+    .join('');
+}
+
+function updateNoteUndoButton() {
+  const button = $('[data-note-act="undo"]', el.noteEditor);
+  if (button) button.disabled = noteUndoStack.length === 0;
+}
+
+function markNoteDirty() {
+  el.noteStatus.textContent = 'Unsaved changes';
+}
+
+function recordNoteUndo(force = false, key = '', snapshot = null) {
+  if (restoringNote) return;
+  const now = Date.now();
+  if (!force && noteUndoStamp.key === key && now - noteUndoStamp.at < 650) return;
+  const value = snapshot || noteEditorSnapshot();
+  const bytes = JSON.stringify(value).length * 2;
+  noteUndoStack.push({ value, bytes });
+  noteUndoBytes += bytes;
+  while (
+    noteUndoStack.length > 1 &&
+    (noteUndoStack.length > NOTE_UNDO_LIMIT_STEPS || noteUndoBytes > NOTE_UNDO_LIMIT_BYTES)
+  ) {
+    noteUndoBytes -= noteUndoStack.shift().bytes;
+  }
+  noteUndoStamp = { at: now, key };
+  updateNoteUndoButton();
+}
+
+function undoNote() {
+  const entry = noteUndoStack.pop();
+  if (!entry) return;
+  noteUndoBytes = Math.max(0, noteUndoBytes - entry.bytes);
+  const previous = entry.value;
+  restoringNote = true;
+  el.noteTitle.value = previous.title;
+  el.noteContent.innerHTML = sanitizeNoteHtml(previous.content);
+  renderNoteChecklist(previous.checklist);
+  restoringNote = false;
+  noteUndoStamp = { at: 0, key: '' };
+  markNoteDirty();
+  updateNoteUndoButton();
+  syncNoteObservedState();
+  el.noteContent.focus();
+}
+
+function addNoteChecklistItem(afterId = null, text = '') {
+  recordNoteUndo(true, 'checklist-add');
+  const list = readNoteChecklist();
+  const entry = { id: uid(), text, done: false };
+  const index = afterId ? list.findIndex((item) => item.id === afterId) : -1;
+  if (index >= 0) list.splice(index + 1, 0, entry);
+  else list.push(entry);
+  renderNoteChecklist(list);
+  markNoteDirty();
+  syncNoteObservedState();
+  const row = el.noteChecklist.querySelector(`[data-id="${entry.id}"]`);
+  $('.note-check-text', row)?.focus();
+}
+
+function saveNoteSelection() {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  if (el.noteContent.contains(range.commonAncestorContainer)) noteSelection = range.cloneRange();
+}
+
+function restoreNoteSelection() {
+  el.noteContent.focus();
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  if (noteSelection && el.noteContent.contains(noteSelection.commonAncestorContainer)) {
+    selection.addRange(noteSelection);
+    return;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(el.noteContent);
+  range.collapse(false);
+  selection.addRange(range);
+}
+
+function applyNoteCommand(command, value = null) {
+  recordNoteUndo(true, `format-${command}`);
+  restoreNoteSelection();
+  document.execCommand(command, false, value);
+  saveNoteSelection();
+  markNoteDirty();
+  syncNoteObservedState();
+}
+
+function applyNoteHighlight(color) {
+  recordNoteUndo(true, `highlight-${color}`);
+  restoreNoteSelection();
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  const holder = document.createElement('div');
+  holder.append(range.cloneContents());
+  const selected = sanitizeNoteHtml(holder.innerHTML) || '&#8203;';
+  document.execCommand('insertHTML', false, `<mark class="hl-${color}">${selected}</mark>`);
+  el.noteHighlightMenu.hidden = true;
+  saveNoteSelection();
+  markNoteDirty();
+  syncNoteObservedState();
+}
+
+function insertNoteImage(dataUrl) {
+  recordNoteUndo(true, 'image');
+  restoreNoteSelection();
+  document.execCommand('insertImage', false, dataUrl);
+  document.execCommand('insertHTML', false, '<div><br></div>');
+  saveNoteSelection();
+  markNoteDirty();
+  syncNoteObservedState();
+}
+
+function readImageFile(file) {
+  if (!/^image\/(?:png|jpe?g|gif|webp)$/i.test(file.type)) return Promise.reject(new Error('Unsupported image'));
+  if (file.size > 8 * 1024 * 1024) return Promise.reject(new Error('Image is larger than 8 MB'));
+
+  const asDataUrl = (blob) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Could not read image'));
+      reader.onload = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    });
+
+  // Keep animated GIFs intact, but cap them more tightly because they cannot be
+  // resized without discarding animation frames.
+  if (file.type.toLowerCase() === 'image/gif') {
+    if (file.size > 2 * 1024 * 1024) return Promise.reject(new Error('Animated images must be smaller than 2 MB'));
+    return asDataUrl(file);
+  }
+
+  return (async () => {
+    const bitmap = await createImageBitmap(file);
+    try {
+      const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext('2d', { alpha: true });
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const encode = (quality) =>
+        new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', quality));
+      let blob = await encode(0.82);
+      if (!blob) throw new Error('Could not compress image');
+      if (blob.size > 2.5 * 1024 * 1024) blob = await encode(0.68);
+      if (!blob || blob.size > 3 * 1024 * 1024) throw new Error('Compressed image is still too large');
+      return asDataUrl(blob);
+    } finally {
+      bitmap.close();
+    }
+  })();
+}
+
+async function addNoteImages(fileList) {
+  const files = Array.from(fileList || []).filter((file) => file.type.startsWith('image/'));
+  if (!files.length) return;
+  for (const file of files) {
+    try {
+      insertNoteImage(await readImageFile(file));
+    } catch (error) {
+      showToast(error.message || 'Could not add that image', null);
+    }
+  }
+}
+
+function openNoteEditor(id = null, initialTitle = '') {
+  const note = id ? find(id) : null;
+  noteEditingId = note?.kind === 'note' ? note.id : null;
+  el.noteEditorHeading.textContent = noteEditingId ? 'Edit note' : 'New note';
+  el.noteTitle.value = note?.title || initialTitle;
+  el.noteContent.innerHTML = sanitizeNoteHtml(note?.content || '');
+  renderNoteChecklist(Array.isArray(note?.checklist) ? note.checklist : []);
+  el.noteStatus.textContent = 'Changes are saved when you press Save';
+  el.noteHighlightMenu.hidden = true;
+  el.noteImageInput.value = '';
+  noteSelection = null;
+  noteUndoStack = [];
+  noteUndoBytes = 0;
+  noteUndoStamp = { at: 0, key: '' };
+  noteBeforeInputRecorded = false;
+  syncNoteObservedState();
+  updateNoteUndoButton();
+  el.noteEditor.hidden = false;
+  requestAnimationFrame(() => {
+    if (!el.noteTitle.value) el.noteTitle.focus();
+    else {
+      el.noteContent.focus();
+      restoreNoteSelection();
+    }
+  });
+}
+
+function closeNoteEditor() {
+  el.noteHighlightMenu.hidden = true;
+  el.noteEditor.classList.add('is-out');
+  setTimeout(() => {
+    el.noteEditor.hidden = true;
+    el.noteEditor.classList.remove('is-out');
+    noteEditingId = null;
+    noteSelection = null;
+    noteUndoStack = [];
+    noteUndoBytes = 0;
+    noteObservedSnapshot = null;
+    noteBeforeInputRecorded = false;
+    renderAll();
+    el.input.focus();
+  }, 180);
+}
+
+function saveOpenNote() {
+  const content = sanitizeNoteHtml(el.noteContent.innerHTML);
+  const checklist = readNoteChecklist().filter((entry) => entry.text);
+  const plain = notePlainText(content);
+  const title = el.noteTitle.value.trim() || plain.slice(0, 80) || 'Untitled note';
+  let note = noteEditingId ? find(noteEditingId) : null;
+
+  if (note?.kind === 'note') {
+    note.title = title;
+    note.content = content;
+    note.checklist = checklist;
+    note.noteVersion = 1;
+    note.updatedAt = Date.now();
+  } else {
+    note = {
+      id: uid(),
+      kind: 'note',
+      noteVersion: 1,
+      title,
+      content,
+      checklist,
+      at: null,
+      done: false,
+      doneAt: null,
+      archived: false,
+      archivedAt: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      notified: true,
+    };
+    data.items.push(note);
+  }
+  data.version = 3;
+  save();
+  closeNoteEditor();
+  showToast(`Saved · ${title}`, null);
+}
+
+el.noteEditor.addEventListener('pointerdown', (event) => {
+  if (event.target.closest('.note-toolbar button, .note-highlight-menu button')) saveNoteSelection();
+  if (event.target.closest('.note-check-toggle')) recordNoteUndo(true, 'checklist-toggle');
+});
+
+el.noteEditor.addEventListener('click', (event) => {
+  const command = event.target.closest('[data-note-cmd]')?.dataset.noteCmd;
+  if (command) {
+    applyNoteCommand(command);
+    return;
+  }
+
+  const highlight = event.target.closest('[data-highlight]')?.dataset.highlight;
+  if (highlight) {
+    applyNoteHighlight(highlight);
+    return;
+  }
+
+  const action = event.target.closest('[data-note-act]')?.dataset.noteAct;
+  if (action === 'save') saveOpenNote();
+  else if (action === 'cancel') closeNoteEditor();
+  else if (action === 'undo') undoNote();
+  else if (action === 'checklist') addNoteChecklistItem();
+  else if (action === 'image') el.noteImageInput.click();
+  else if (action === 'highlight') el.noteHighlightMenu.hidden = !el.noteHighlightMenu.hidden;
+  else if (action === 'remove-check') {
+    const row = event.target.closest('.note-check-row');
+    if (!row) return;
+    recordNoteUndo(true, 'checklist-remove');
+    row.remove();
+    markNoteDirty();
+    syncNoteObservedState();
+  }
+});
+
+el.noteFontSize.addEventListener('change', () => {
+  applyNoteCommand('fontSize', el.noteFontSize.value);
+  el.noteFontSize.value = '3';
+});
+
+el.noteEditor.addEventListener('beforeinput', (event) => {
+  if (event.target === el.noteTitle) {
+    recordNoteUndo(false, 'title');
+    noteBeforeInputRecorded = true;
+  } else if (event.target === el.noteContent) {
+    recordNoteUndo(false, 'content');
+    noteBeforeInputRecorded = true;
+  }
+  else if (event.target.classList?.contains('note-check-text')) {
+    recordNoteUndo(false, `check-${event.target.closest('.note-check-row')?.dataset.id || ''}`);
+    noteBeforeInputRecorded = true;
+  }
+});
+
+el.noteEditor.addEventListener('input', (event) => {
+  if (event.target.matches('#noteTitle, #noteContent, .note-check-text')) {
+    if (!noteBeforeInputRecorded && noteObservedSnapshot) {
+      recordNoteUndo(true, 'input-fallback', noteObservedSnapshot);
+    }
+    noteBeforeInputRecorded = false;
+    markNoteDirty();
+    syncNoteObservedState();
+  }
+  if (event.target.classList?.contains('note-check-toggle')) {
+    event.target.closest('.note-check-row')?.classList.toggle('is-done', event.target.checked);
+    markNoteDirty();
+    syncNoteObservedState();
+  }
+});
+
+el.noteEditor.addEventListener('keydown', (event) => {
+  if (event.ctrlKey && event.key.toLowerCase() === 's') {
+    event.preventDefault();
+    saveOpenNote();
+    return;
+  }
+  if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'z') {
+    event.preventDefault();
+    undoNote();
+    return;
+  }
+  if (event.ctrlKey && event.key.toLowerCase() === 'b' && event.target === el.noteContent) {
+    event.preventDefault();
+    saveNoteSelection();
+    applyNoteCommand('bold');
+    return;
+  }
+  if (event.target.classList?.contains('note-check-toggle') && (event.key === ' ' || event.key === 'Enter')) {
+    recordNoteUndo(true, 'checklist-toggle');
+  }
+
+  const checkInput = event.target.closest('.note-check-text');
+  if (checkInput && event.key === 'Enter') {
+    event.preventDefault();
+    addNoteChecklistItem(checkInput.closest('.note-check-row')?.dataset.id);
+  } else if (checkInput && event.key === 'Backspace' && !checkInput.value) {
+    const row = checkInput.closest('.note-check-row');
+    const previous = row?.previousElementSibling;
+    recordNoteUndo(true, 'checklist-remove');
+    row?.remove();
+    $('.note-check-text', previous)?.focus();
+    markNoteDirty();
+    syncNoteObservedState();
+  }
+});
+
+document.addEventListener('selectionchange', () => {
+  if (!el.noteEditor.hidden) saveNoteSelection();
+});
+
+el.noteImageInput.addEventListener('change', () => {
+  addNoteImages(el.noteImageInput.files);
+  el.noteImageInput.value = '';
+});
+
+el.noteContent.addEventListener('paste', (event) => {
+  const imageFiles = Array.from(event.clipboardData?.files || []).filter((file) => file.type.startsWith('image/'));
+  event.preventDefault();
+  saveNoteSelection();
+  if (imageFiles.length) {
+    addNoteImages(imageFiles);
+    return;
+  }
+  const text = event.clipboardData?.getData('text/plain') || '';
+  if (!text) return;
+  recordNoteUndo(true, 'paste');
+  restoreNoteSelection();
+  document.execCommand('insertText', false, text);
+  saveNoteSelection();
+  markNoteDirty();
+  syncNoteObservedState();
+});
+
+el.noteDropzone.addEventListener('dragover', (event) => {
+  if (!Array.from(event.dataTransfer?.items || []).some((item) => item.type.startsWith('image/'))) return;
+  event.preventDefault();
+  el.noteDropzone.classList.add('is-dragging');
+});
+
+el.noteDropzone.addEventListener('dragleave', (event) => {
+  if (!el.noteDropzone.contains(event.relatedTarget)) el.noteDropzone.classList.remove('is-dragging');
+});
+
+el.noteDropzone.addEventListener('drop', (event) => {
+  const files = Array.from(event.dataTransfer?.files || []).filter((file) => file.type.startsWith('image/'));
+  el.noteDropzone.classList.remove('is-dragging');
+  if (!files.length) return;
+  event.preventDefault();
+  const range = document.caretRangeFromPoint?.(event.clientX, event.clientY);
+  if (range && el.noteContent.contains(range.startContainer)) noteSelection = range.cloneRange();
+  addNoteImages(files);
+});
 
 function addLink(url, title, category) {
   const u = toUrl(url);
@@ -860,6 +1333,13 @@ function refreshComposer() {
   const text = el.input.value.trim();
   el.form.classList.toggle('has-text', text.length > 0);
 
+  if (view === 'notes') {
+    el.chipWhen.hidden = true;
+    el.chipCat.hidden = true;
+    el.parsed.hidden = true;
+    return;
+  }
+
   if (view === 'links') {
     const cat = currentCat();
     el.chipWhen.hidden = true;
@@ -895,6 +1375,14 @@ el.input.addEventListener('input', refreshComposer);
 el.form.addEventListener('submit', (e) => {
   e.preventDefault();
   const raw = el.input.value.trim();
+
+  if (view === 'notes') {
+    el.input.value = '';
+    refreshComposer();
+    openNoteEditor(null, raw);
+    return;
+  }
+
   if (!raw) return;
 
   if (view === 'links') {
@@ -1055,6 +1543,12 @@ el.list.addEventListener('click', (e) => {
   const id = node.dataset.id;
   const act = e.target.closest('[data-act]')?.dataset.act;
 
+  if (node.classList.contains('is-note')) {
+    if (act === 'del') removeItem(id);
+    else openNoteEditor(id);
+    return;
+  }
+
   if (node.classList.contains('is-link')) {
     if (act === 'del') removeLink(id);
     else if (act === 'edit') {
@@ -1077,7 +1571,7 @@ el.list.addEventListener('click', (e) => {
 el.list.addEventListener('dblclick', (e) => {
   const node = e.target.closest('.item');
   // A single click already opens a link, so double-click must not also edit it.
-  if (!node || node.classList.contains('is-link') || e.target.closest('button')) return;
+  if (!node || node.classList.contains('is-link') || node.classList.contains('is-note') || e.target.closest('button')) return;
   editingId = node.dataset.id;
   renderList();
 });
@@ -1111,6 +1605,12 @@ function commitEdit(input, keep) {
 }
 
 el.list.addEventListener('keydown', (e) => {
+  const note = e.target.closest('.is-note');
+  if (note && !e.target.closest('button') && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
+    openNoteEditor(note.dataset.id);
+    return;
+  }
   if (!e.target.classList.contains('title-edit')) return;
   if (e.key === 'Enter') {
     e.preventDefault();
@@ -1132,12 +1632,14 @@ el.list.addEventListener(
 
 const PLACEHOLDER = {
   schedule: 'Add an event…',
-  notes: 'Add a note or task…',
+  notes: 'New note title (optional)…',
+  tasks: 'Add a task…',
   links: 'Paste a link…',
 };
 const HINT = {
   schedule: 'Try “standup tomorrow 9:30am”',
-  notes: 'Try “email Ana friday” — time is optional',
+  notes: 'Press + to open the full note editor',
+  tasks: 'Try “email Ana friday” — time is optional',
   links: 'Try “figma.com/file/x moodboard #design”',
 };
 
@@ -1146,8 +1648,9 @@ function applyViewChrome() {
   $$('.seg-btn').forEach((b) => b.classList.toggle('is-on', b.dataset.view === view));
   el.input.placeholder = PLACEHOLDER[view];
   el.hint.textContent = HINT[view];
-  $('[data-act="when"]').hidden = view === 'links';
+  $('[data-act="when"]').hidden = view !== 'schedule' && view !== 'tasks';
   $('[data-act="cat"]').hidden = view !== 'links';
+  $('.ico-add', el.form).title = view === 'notes' ? 'Create note' : 'Add';
 }
 
 function setView(next) {
@@ -1170,7 +1673,7 @@ el.seg.addEventListener('click', (e) => {
 
 /* ── sheet ───────────────────────────────────────────────────────────── */
 
-function openSheet(pane = 'archive') {
+function openSheet(pane = 'settings') {
   el.sheet.hidden = false;
   el.sheet.classList.remove('is-out');
   setPane(pane);
@@ -1260,7 +1763,8 @@ el.sheet.addEventListener('click', (e) => {
   const pick = e.target.closest('.pick button');
   if (pick) {
     const key = pick.parentElement.dataset.pick;
-    applySettings({ [key]: pick.dataset.value });
+    const value = key === 'reminderLeadMinutes' ? Number(pick.dataset.value) : pick.dataset.value;
+    applySettings({ [key]: value });
   }
 });
 
@@ -1286,8 +1790,7 @@ function applyPaneSites(sites, changedKey) {
   renderAiTabs();
   const view = aiViews.get(changedKey);
   if (view) {
-    view.remove();
-    aiViews.delete(changedKey);
+    destroyAiView(changedKey);
   }
   if (aiTab === changedKey && aiOpen()) setAiTab(changedKey);
   renderSlotUi();
@@ -1296,7 +1799,7 @@ function applyPaneSites(sites, changedKey) {
 function renderSlotUi() {
   const custom = aiSites.custom;
   if (custom && document.activeElement !== el.slotLabel && document.activeElement !== el.slotUrl) {
-    el.slotLabel.value = custom.label || '';
+    el.slotLabel.value = custom.inputLabel || '';
     el.slotUrl.value = custom.url || '';
   }
   const mailUrl = aiSites.mail?.url;
@@ -1311,11 +1814,12 @@ function renderSlotUi() {
 function syncSettingsUi() {
   $$('.pick').forEach((p) => {
     const val = settings[p.dataset.pick];
-    $$('button', p).forEach((b) => b.classList.toggle('is-on', b.dataset.value === val));
+    $$('button', p).forEach((b) => b.classList.toggle('is-on', String(b.dataset.value) === String(val)));
   });
   $$('[data-toggle]').forEach((t) => {
     t.checked = !!settings[t.dataset.toggle];
   });
+  $('.reminder-lead')?.classList.toggle('is-disabled', !settings.reminders);
 }
 
 /* ── theme ───────────────────────────────────────────────────────────── */
@@ -1334,10 +1838,61 @@ function cycleTheme() {
 
 const AI_PARTITION = 'persist:sidenote-ai';
 const PANE_ANIM_MS = 320;
+const AI_INACTIVE_IDLE_MS = 45_000;
+const AI_CLOSED_IDLE_MS = 120_000;
+const TOOL_IDLE_MS = 45_000;
 const aiViews = new Map(); // key -> <webview>
+const aiCleanupTimers = new Map();
 let aiSites = {};
 let mailProviders = [];
 let aiTab = 'chatgpt';
+let preconnectTimer = null;
+let lastPreconnect = { origin: '', at: 0 };
+
+function warmWebsite(url, delay = 0) {
+  let origin = '';
+  try {
+    origin = new URL(url).origin;
+  } catch (_) {
+    return;
+  }
+  clearTimeout(preconnectTimer);
+  preconnectTimer = setTimeout(() => {
+    const now = Date.now();
+    if (lastPreconnect.origin === origin && now - lastPreconnect.at < 30_000) return;
+    lastPreconnect = { origin, at: now };
+    api.web.preconnect(url).catch(() => {});
+  }, delay);
+}
+
+function cancelAiCleanup(key) {
+  clearTimeout(aiCleanupTimers.get(key));
+  aiCleanupTimers.delete(key);
+}
+
+function destroyAiView(key) {
+  cancelAiCleanup(key);
+  const view = aiViews.get(key);
+  if (!view) return;
+  try {
+    view.stop();
+  } catch (_) {
+    /* guest may already be detached */
+  }
+  view.remove();
+  aiViews.delete(key);
+}
+
+function scheduleAiCleanup(key, delay) {
+  cancelAiCleanup(key);
+  if (!aiViews.has(key)) return;
+  const timer = setTimeout(() => {
+    aiCleanupTimers.delete(key);
+    if (aiOpen() && !activeTool && aiTab === key) return;
+    destroyAiView(key);
+  }, delay);
+  aiCleanupTimers.set(key, timer);
+}
 
 /** Tab labels come from settings, so the strip is rebuilt whenever they change. */
 function renderAiTabs() {
@@ -1345,10 +1900,18 @@ function renderAiTabs() {
     const site = aiSites[b.dataset.ai];
     if (site) {
       b.textContent = site.label;
-      b.title = site.url;
+      b.title = site.url || 'Empty custom tab — set it up in Settings';
     }
   });
 }
+
+const warmAiFromEvent = (event) => {
+  const button = event.target.closest('[data-ai]');
+  const site = button ? aiSites[button.dataset.ai] : null;
+  if (site?.url) warmWebsite(site.url, 140);
+};
+el.aiSeg.addEventListener('pointerover', warmAiFromEvent);
+el.aiSeg.addEventListener('focusin', warmAiFromEvent);
 
 /**
  * A slot pointed at Google mail hits the same embedded-browser block as
@@ -1392,20 +1955,22 @@ function showGoogleNote(key) {
   el.aiNote.hidden = false;
 }
 
-function showAiState(text, isError = false) {
+function showAiState(text, isError = false, isEmpty = false) {
   el.aiStateText.textContent = text;
   el.aiState.classList.toggle('is-error', isError);
+  el.aiState.classList.toggle('is-empty', isEmpty);
   el.aiState.hidden = false;
 }
 const hideAiState = () => {
   el.aiState.hidden = true;
+  el.aiState.classList.remove('is-error', 'is-empty');
 };
 
 /** Webviews are created on first use so no chat site loads at startup. */
 function ensureAiView(key) {
   if (aiViews.has(key)) return aiViews.get(key);
   const site = aiSites[key];
-  if (!site) return null;
+  if (!site || !site.url) return null;
 
   const view = document.createElement('webview');
   view.setAttribute('partition', AI_PARTITION);
@@ -1450,14 +2015,19 @@ function ensureAiView(key) {
 
 function setAiTab(key) {
   if (!aiSites[key]) return;
+  const previousTab = aiTab;
   // Picking a chat tab always leaves tool mode.
   if (activeTool) {
     activeTool = null;
     el.aiSeg.hidden = false;
     el.aiToolbar.hidden = true;
     if (toolView) toolView.hidden = true;
+    scheduleToolCleanup();
   }
   aiTab = key;
+  cancelAiCleanup(key);
+  warmWebsite(aiSites[key].url);
+  if (previousTab !== key) scheduleAiCleanup(previousTab, AI_INACTIVE_IDLE_MS);
   el.aiSeg.dataset.on = key;
   $$('button', el.aiSeg).forEach((b) => b.classList.toggle('is-on', b.dataset.ai === key));
 
@@ -1468,6 +2038,11 @@ function setAiTab(key) {
   aiViews.forEach((v, k) => {
     v.hidden = k !== key;
   });
+  if (!view && !aiSites[key].url) {
+    showAiState('This custom tab is empty. Add a website in Settings when you want to use it.', false, true);
+    api.ai.setTab(key);
+    return;
+  }
   // isLoading() throws until the guest is attached and dom-ready has fired, so
   // a tab switched to immediately after creation must not be asked.
   try {
@@ -1492,6 +2067,7 @@ function openAiPane({ skipTab = false } = {}) {
   el.ai.classList.remove('is-closing');
   el.html.classList.add('ai-mode');
   $('[data-act="ai"]').classList.add('is-on');
+  if (!skipTab) cancelAiCleanup(aiTab);
   if (!skipTab) setAiTab(aiTab);
   api.ai.setOpen(true);
 }
@@ -1511,6 +2087,10 @@ function closeAiPane() {
     el.aiSeg.hidden = false;
     el.aiToolbar.hidden = true;
     if (toolView) toolView.hidden = true;
+    aiViews.forEach((_view, key) => {
+      scheduleAiCleanup(key, key === aiTab ? AI_CLOSED_IDLE_MS : AI_INACTIVE_IDLE_MS);
+    });
+    scheduleToolCleanup();
     aiCloseTimer = null;
   }, PANE_ANIM_MS);
 }
@@ -1522,9 +2102,12 @@ el.ai.addEventListener('click', (e) => {
   if (tab) return setAiTab(tab.dataset.ai);
 
   const act = e.target.closest('[data-act]')?.dataset.act;
-  if (act === 'aiClose') closeAiPane();
+  if (act === 'aiClose') {
+    if (activeTool) returnToToolsList();
+    else closeAiPane();
+  }
   if (act === 'aiAsk') api.ask.show();
-  if (act === 'toolBack') closeTool();
+  if (act === 'toolBack') returnToToolsList();
   if (act === 'aiNoteClose') el.aiNote.hidden = true;
   if (act === 'aiPopout') {
     if (activeTool) api.links.open(activeTool.url);
@@ -1557,6 +2140,29 @@ let toolFilter = '';
 let toolEditing = null; // tool id whose URL row is open
 let toolView = null; // one reusable webview for every tool
 let activeTool = null;
+let toolCleanupTimer = null;
+
+function destroyToolView() {
+  clearTimeout(toolCleanupTimer);
+  toolCleanupTimer = null;
+  if (!toolView) return;
+  try {
+    toolView.stop();
+  } catch (_) {
+    /* guest may already be detached */
+  }
+  toolView.remove();
+  toolView = null;
+}
+
+function scheduleToolCleanup(delay = TOOL_IDLE_MS) {
+  clearTimeout(toolCleanupTimer);
+  if (!toolView) return;
+  toolCleanupTimer = setTimeout(() => {
+    toolCleanupTimer = null;
+    if (!activeTool) destroyToolView();
+  }, delay);
+}
 
 const prettyUrl = (u) => String(u).replace(/^https?:\/\//, '').replace(/\/$/, '');
 
@@ -1670,6 +2276,9 @@ function openTool(id) {
   const tool = tools.find((t) => t.id === id);
   if (!tool) return;
 
+  clearTimeout(toolCleanupTimer);
+  toolCleanupTimer = null;
+  warmWebsite(tool.url);
   activeTool = tool;
   closeSheet();
 
@@ -1705,7 +2314,15 @@ function closeTool() {
   el.aiToolbar.hidden = true;
   if (toolView) toolView.hidden = true;
   hideAiState();
+  scheduleToolCleanup();
   setAiTab(aiTab);
+}
+
+/** Close an open tool and restore the launcher instead of dropping into chats. */
+function returnToToolsList() {
+  if (!activeTool) return;
+  closeAiPane();
+  setTimeout(() => openSheet('tools'), PANE_ANIM_MS + 20);
 }
 
 el.toolSearch.addEventListener('input', () => {
@@ -1713,6 +2330,15 @@ el.toolSearch.addEventListener('input', () => {
   toolEditing = null;
   renderTools();
 });
+
+const warmToolFromEvent = (event) => {
+  const row = event.target.closest('[data-tool]');
+  if (!row) return;
+  const tool = tools.find((entry) => entry.id === row.dataset.tool);
+  if (tool) warmWebsite(tool.url, 140);
+};
+el.toolList.addEventListener('pointerover', warmToolFromEvent);
+el.toolList.addEventListener('focusin', warmToolFromEvent);
 
 el.toolList.addEventListener('click', async (e) => {
   const row = e.target.closest('[data-tool]');
@@ -1835,7 +2461,7 @@ $('.head-actions').addEventListener('click', (e) => {
   if (act === 'collapse') api.dock.collapse();
   else if (act === 'theme') cycleTheme();
   else if (act === 'ai') toggleAiPane();
-  else if (act === 'menu') (el.sheet.hidden ? openSheet('archive') : closeSheet());
+  else if (act === 'menu') (el.sheet.hidden ? openSheet('settings') : closeSheet());
   else if (act === 'tools') {
     // Straight to the launcher; clicking again closes it.
     const onTools = !el.sheet.hidden && $('[data-pane="tools"]') && !$('[data-pane="tools"]').hidden;
@@ -1850,11 +2476,18 @@ $('[data-act="cat"]').addEventListener('click', () => (el.catPop.hidden ? openCa
 /* ── dock state + dragging ───────────────────────────────────────────── */
 
 let wasCollapsed = true;
+let dockCollapsed = true;
 
 function applyDock(m) {
+  dockCollapsed = !!m.collapsed;
   el.html.classList.toggle('collapsed', m.collapsed);
-  el.html.classList.toggle('edge-left', m.edge === 'left');
-  el.html.classList.toggle('edge-right', m.edge !== 'left');
+  const edge = m.edge === 'left' || m.edge === 'top' ? m.edge : 'right';
+  el.html.classList.toggle('edge-left', edge === 'left');
+  el.html.classList.toggle('edge-right', edge === 'right');
+  el.html.classList.toggle('edge-top', edge === 'top');
+  if (el.collapseBtn) {
+    el.collapseBtn.title = m.trayOnly ? 'Hide to tray (Alt+Shift+N)' : 'Collapse (Alt+Shift+N)';
+  }
   el.html.style.setProperty('--panel-w', `${m.panelW}px`);
   el.html.style.setProperty('--panel-h', `${m.panelH}px`);
   el.html.style.setProperty('--tab-w', `${m.tabW}px`);
@@ -1865,6 +2498,10 @@ function applyDock(m) {
   // Focus the composer only when the panel actually opens — a re-layout from a
   // monitor being plugged in shouldn't steal the caret.
   if (wasCollapsed && !m.collapsed && el.ai.hidden) setTimeout(() => el.input.focus(), 120);
+  if (wasCollapsed && !m.collapsed) {
+    renderHeader();
+    renderList();
+  }
   wasCollapsed = m.collapsed;
 }
 
@@ -1909,9 +2546,55 @@ function makeDraggable(node, onClick) {
 makeDraggable(el.grip, null);
 makeDraggable(el.tab, () => api.dock.expand());
 
+/* ── expand the collapsed edge tab while dragging external content ─────── */
+
+let dragExpandTimer = null;
+
+function clearDragExpand() {
+  clearTimeout(dragExpandTimer);
+  dragExpandTimer = null;
+  el.tab.classList.remove('is-drag-hover');
+}
+
+function draggedContentSupported(event) {
+  const types = Array.from(event.dataTransfer?.types || []);
+  return types.some((type) => ['Files', 'text/plain', 'text/uri-list', 'text/html'].includes(type));
+}
+
+document.addEventListener('dragenter', (event) => {
+  if (!el.html.classList.contains('collapsed') || !draggedContentSupported(event)) return;
+  event.preventDefault();
+  el.tab.classList.add('is-drag-hover');
+  if (dragExpandTimer) return;
+  dragExpandTimer = setTimeout(() => {
+    clearDragExpand();
+    api.dock.expand();
+  }, 280);
+});
+
+document.addEventListener('dragover', (event) => {
+  if (!el.html.classList.contains('collapsed') || !draggedContentSupported(event)) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+});
+
+document.addEventListener('dragleave', (event) => {
+  if (!event.relatedTarget) clearDragExpand();
+});
+
+document.addEventListener('drop', clearDragExpand);
+document.addEventListener('dragend', clearDragExpand);
+
 /* ── keyboard ────────────────────────────────────────────────────────── */
 
 document.addEventListener('keydown', (e) => {
+  if (!el.noteEditor.hidden) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeNoteEditor();
+    }
+    return;
+  }
   if (e.key === 'Escape') {
     if (!el.pop.hidden) return closeWhen();
     if (!el.catPop.hidden) return closeCat();
@@ -1920,9 +2603,9 @@ document.addEventListener('keydown', (e) => {
     if (editingId) return;
     return api.dock.collapse();
   }
-  if (e.ctrlKey && ['1', '2', '3'].includes(e.key)) {
+  if (e.ctrlKey && ['1', '2', '3', '4'].includes(e.key)) {
     e.preventDefault();
-    setView({ 1: 'schedule', 2: 'notes', 3: 'links' }[e.key]);
+    setView({ 1: 'schedule', 2: 'notes', 3: 'tasks', 4: 'links' }[e.key]);
   }
   if (e.key === '/' && document.activeElement !== el.input && !editingId) {
     e.preventDefault();
@@ -1943,24 +2626,18 @@ document.addEventListener('pointerdown', (e) => {
 
 let lastDay = startOfDay(Date.now());
 
-setInterval(() => {
-  const now = Date.now();
-
-  if (settings.reminders) {
-    for (const item of items()) {
-      if (item.archived || item.done || item.notified || item.at == null) continue;
-      if (item.at <= now && now - item.at < 10 * 60_000) {
-        item.notified = true;
-        api.notify({
-          title: item.kind === 'event' ? 'Starting now' : 'Due now',
-          body: item.title,
-        });
-        save();
-      }
-    }
+api.reminders.onFired((entries) => {
+  for (const entry of entries || []) {
+    const item = find(entry.id);
+    if (!item) continue;
+    item.notified = true;
+    item.notifiedAt = entry.notifiedAt;
   }
+});
 
-  const today = startOfDay(now);
+setInterval(() => {
+  if (dockCollapsed || aiOpen() || !el.sheet.hidden || !el.noteEditor.hidden) return;
+  const today = startOfDay(Date.now());
   if (today !== lastDay) {
     lastDay = today;
     renderAll();
@@ -1971,7 +2648,7 @@ setInterval(() => {
     renderHeader();
     renderList();
   }
-}, 20_000);
+}, 60_000);
 
 /* ── boot ────────────────────────────────────────────────────────────── */
 
@@ -1989,7 +2666,7 @@ setInterval(() => {
   if (aiSites[s.aiTab]) aiTab = s.aiTab;
   renderAiTabs();
 
-  data = loaded && Array.isArray(loaded.items) ? loaded : { version: 1, items: [] };
+  data = loaded && Array.isArray(loaded.items) ? loaded : { version: 3, items: [] };
   // Legacy shape from an earlier build.
   if (Array.isArray(loaded?.events) || Array.isArray(loaded?.tasks)) {
     data.items = [
@@ -1999,11 +2676,40 @@ setInterval(() => {
   }
   // Links arrived in 1.2 — older data files simply don't have the array.
   if (!Array.isArray(data.links)) data.links = [];
+  let migratedData = false;
+  data.items = data.items.map((item) => {
+    if (item.kind !== 'note') return item;
+    const content = typeof item.content === 'string' ? item.content : '';
+    const checklist = Array.isArray(item.checklist) ? item.checklist : [];
+
+    // The short-lived 1.3 rich-note build converted every task into a blank
+    // note. Recover those rows automatically. Genuine rich notes carry content,
+    // checklist items, or noteVersion.
+    if (!item.noteVersion && !content.trim() && checklist.length === 0) {
+      const { content: _content, checklist: _checklist, updatedAt: _updatedAt, noteVersion: _noteVersion, ...task } = item;
+      migratedData = true;
+      return { ...task, kind: 'task' };
+    }
+
+    const next = {
+      ...item,
+      noteVersion: 1,
+      content,
+      checklist,
+      updatedAt: item.updatedAt || item.createdAt || Date.now(),
+    };
+    if (!item.noteVersion || !Array.isArray(item.checklist) || typeof item.content !== 'string') migratedData = true;
+    return next;
+  });
+  if (data.version !== 3) {
+    data.version = 3;
+    migratedData = true;
+  }
   data.items.forEach((i) => seenIds.add(i.id));
   data.links.forEach((l) => seenIds.add(l.id));
 
   settings = s;
-  view = ['notes', 'links'].includes(s.view) ? s.view : 'schedule';
+  view = ['notes', 'tasks', 'links'].includes(s.view) ? s.view : 'schedule';
   applyViewChrome();
 
   applyDock(metrics);
@@ -2011,6 +2717,7 @@ setInterval(() => {
   renderSlotUi();
   renderAll();
   refreshComposer();
+  if (migratedData) save();
 
   document.fonts.ready.then(() => {
     if (!document.fonts.check('500 12px Manrope')) {

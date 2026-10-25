@@ -1,8 +1,8 @@
-# Sidenote
+# Sidenote 1.5.0
 
 A small, always-available Windows desktop widget for **notes, tasks and scheduling**.
-It docks flush against the side of your screen and collapses into a vertical tab —
-like a tool window in Android Studio.
+It docks flush against the left, right, or top edge of your screen and collapses
+into a small edge tab, or hides completely to the system tray.
 
 Built with Electron. Manrope throughout, light + dark, frosted-glass surfaces with
 low-key gradient highlights.
@@ -13,8 +13,12 @@ low-key gradient highlights.
 
 ```bash
 npm install
+npx install-electron
 npm start
 ```
+
+The locked Electron release provides a separate runtime installer; run
+`install-electron` once after installing the project dependencies.
 
 ## Build a real installer
 
@@ -33,7 +37,18 @@ widget to start with Windows reliably — see [Starting with Windows](#starting-
 `Overdue / Today / Tomorrow / <weekday> / <date>`. The soonest upcoming item is marked
 with a thin gradient rail on its edge.
 
-**Notes** — tasks and notes. A time is optional; anything without one lands in `Anytime`.
+**Notes** — rich notes with a title, formatted text, colored highlights, checklists,
+and embedded images. Paste or drop images into the editor, or use its image button.
+Use **Save** or `Ctrl+S` to keep changes; `Ctrl+Z` undoes edits while the editor is open.
+The list shows note previews and checklist progress.
+
+**Tasks** — a separate list for to-dos. A time is optional; anything without one
+lands in `Anytime`.
+
+**Quick capture** — `Alt+Shift+C` opens a floating input bar without opening the
+panel. Type a task or event and press Enter to save and close, or Shift+Enter to save
+and keep adding. Dated text defaults to an event; undated text defaults to a task.
+Use Tab or the task/event buttons to choose explicitly. The bar is also in the tray menu.
 
 **Links** — a bookmark shelf grouped by category. Paste or type a URL and it is saved
 under whatever category you give it; categories are just labels you invent, sorted
@@ -53,7 +68,9 @@ circle again during the strike-through also undoes it.
 
 **Archive** — restore or permanently delete anything you completed, or clear it all.
 
-**Reminders** — a desktop notification fires when an event's time arrives.
+**Reminders** — desktop notifications for dated events and tasks, configurable to
+arrive 10, 15, or 30 minutes early in Settings. Scheduling runs in the main process
+so it does not depend on the panel's refresh timer.
 
 **Web pane** — the apps button in the header (left of the monitor button) swaps the
 list for an embedded browser. No address bar, no search bar — just the site. The panel
@@ -63,7 +80,7 @@ smoothly widens from 344px to 520px while it's open and eases back when you clos
 | Tab | What it is |
 | --- | --- |
 | 1–2 | **ChatGPT** and **Claude**, fixed |
-| 3 | **Custom** — your label, your URL. Defaults to Gmail |
+| 3 | **Custom** — your label, your URL. Starts empty; configure it in Settings |
 | 4 | **Mail** — pick from Outlook, Gmail, Yahoo, Proton, iCloud, Zoho, Fastmail, GMX or AOL |
 
 Both configurable slots live in Settings → *Web pane tabs*. Changing one relabels the
@@ -85,6 +102,9 @@ in the screenshot.
   session, so OAuth works.
 - Tabs load lazily — nothing is fetched until you first open a tab, and no site
   loads at login.
+- Inactive tabs and tool views are released after an idle delay. Persistent sign-in
+  sessions remain available when the views are recreated. Hidden Ask windows are
+  also released after an idle delay.
 - The pane is restricted to those four origins; a webview can't be attached with any
   other partition or start URL.
 - Auto-collapse is suppressed while the pane is open, so a sign-in popup taking focus
@@ -123,7 +143,8 @@ themselves.
 
 ### Quick add
 
-The composer parses dates out of what you type, so you rarely need the picker:
+The Schedule and Tasks composers and the floating quick-capture bar share the
+same date parser, so you rarely need the picker:
 
 | You type | You get |
 | --- | --- |
@@ -166,10 +187,14 @@ Renaming a link (✎) also accepts a `#tag` to re-file it.
 
 - **Collapse** with the `›` button, `Esc`, or `Alt+Shift+N`. The panel animates down
   into a slim edge tab showing a badge with how many items are due today.
+- **Tab size**: choose Small, Medium, or Large in Settings. Turn on **Hide to tray
+  when collapsed** to hide the window completely instead of leaving an edge tab.
 - **Expand** by clicking the tab, the tray icon, or `Alt+Shift+N`.
+- **Drag into the panel**: hold supported text, links, or files over the collapsed
+  tab to expand it. Images can then be dropped into an open note editor.
 - **Move it** by dragging the header (or the tab itself). Release anywhere — it snaps
-  flush to the nearest left/right edge of whichever monitor you dropped it on, keeping
-  its vertical position.
+  flush to the nearest left, right, or top edge of whichever monitor you dropped it
+  on, keeping its position along that edge.
 - **Multi-monitor**: `Alt+Shift+M`, the monitor button in the header, or tray →
   *Move to next screen* cycles displays. The chosen monitor is remembered. If that
   monitor is later unplugged, the widget falls back to the primary display; plugging
@@ -184,11 +209,14 @@ Renaming a link (✎) also accepts a `#tag` to re-file it.
 | `Alt+Shift+N` | Toggle the panel (global) |
 | `Alt+Shift+M` | Move to the next monitor (global) |
 | `Alt+Shift+A` | Ask about this screen — floating bar (global) |
-| `Ctrl+1` / `Ctrl+2` / `Ctrl+3` | Schedule / Notes / Links |
+| `Alt+Shift+C` | Quick-capture bar (global) |
+| `Ctrl+1` / `Ctrl+2` / `Ctrl+3` / `Ctrl+4` | Schedule / Notes / Tasks / Links |
+| `Ctrl+S` / `Ctrl+Z` / `Ctrl+B` | Save / undo / bold in the note editor |
 | `/` | Jump to the composer |
 | `Enter` | Add, or commit a rename |
+| `Shift+Enter` | Save and keep the quick-capture bar open |
 | `Esc` | Close popover → close sheet → close AI pane → collapse |
-| Double-click an item | Rename it |
+| Double-click an item | Rename a task/event/link, or open the rich-note editor |
 
 ---
 
@@ -236,11 +264,16 @@ also want `GUTTER = 0` in `src/main/dock.js`.
 ## Layout
 
 ```
-src/main/main.js     app lifecycle, window, tray, IPC, shortcuts, autostart
+src/main/main.js     app lifecycle, window, tray, IPC, shortcuts, reminders, autostart
 src/main/dock.js     edge geometry, collapse animation, drag-to-snap, monitors
 src/main/store.js    atomic JSON persistence
+src/main/ask.js      floating Ask bar and idle host lifecycle
+src/main/capture.js  floating quick-capture window and persistence bridge
 src/preload.js       contextBridge API surface
+src/capture-preload.js quick-capture contextBridge API
 src/renderer/        UI — index.html, styles.css, app.js
+src/renderer/parse.js shared date parser for the panel and quick capture
+src/renderer/capture-* quick-capture UI, styling, and event handling
 tools/make-icon.js   generates the app/tray icons from code (no image deps)
 ```
 

@@ -19,8 +19,9 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 
 const { Store } = require('./store');
-const { Dock, COLLAPSED_W, COLLAPSED_H } = require('./dock');
+const { Dock, COLLAPSED_MIN, DEFAULT_TAB_SIZE } = require('./dock');
 const { Ask } = require('./ask');
+const { Capture } = require('./capture');
 const { resolveTools, resolveToolUrl, toolOrigins, isHttpUrl } = require('./tools');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -28,24 +29,28 @@ const ASSETS = path.join(ROOT, 'assets');
 const AUTOSTART_FLAG = '--autostart';
 
 const DEFAULT_SETTINGS = {
-  edge: 'right',
-  anchor: 0.5,
+  edge: 'right', // left | right | top
+  anchor: 0.5, // position along the docked edge
   collapsed: false,
+  trayOnly: false, // collapse to the tray instead of an edge tab
+  tabSize: DEFAULT_TAB_SIZE, // collapsed edge tab: small | medium | large
   displayId: null,
   theme: 'system', // system | light | dark
   onComplete: 'archive', // archive | delete
   autoCollapse: true, // tuck back to the edge as soon as focus leaves
   alwaysOnTop: true,
   reminders: true,
+  reminderLeadMinutes: 15, // notify before an event or task is due: 10 | 15 | 30
   startWithWindows: true, // the widget is meant to be there when you log in
-  view: 'schedule', // schedule | notes
+  view: 'schedule', // schedule | notes | tasks | links
   aiOpen: false,
   aiTab: 'chatgpt', // chatgpt | claude | custom | mail
-  paneCustom: { label: 'Gmail', url: 'https://mail.google.com/mail/u/0/' },
+  paneCustom: { label: '', url: '' },
   paneMail: 'outlook', // id from MAIL_PROVIDERS
   askTarget: 'chatgpt', // which site the floating Ask bar drives
   askIncludeScreenshot: false, // opt-in: attach a full-screen capture to Ask prompts
   askBounds: null, // remembered position of the Ask bar
+  captureBounds: null, // remembered position of the quick-capture bar
   toolUrls: {}, // per-tool URL overrides, keyed by tool id
   customTools: [], // user-added web tools
   favoriteTools: [], // tool ids pinned to the top of the launcher
@@ -73,7 +78,7 @@ const MAIL_PROVIDERS = [
   { id: 'aol', label: 'AOL Mail', url: 'https://mail.aol.com/' },
 ];
 
-const DEFAULT_CUSTOM_SLOT = { label: 'Gmail', url: 'https://mail.google.com/mail/u/0/' };
+const DEFAULT_CUSTOM_SLOT = { label: '', url: '' };
 
 /** The four pane tabs with both configurable slots resolved. */
 function paneSites() {
@@ -85,7 +90,12 @@ function paneSites() {
 
   return {
     ...AI_FIXED,
-    custom: { label: String(custom.label || 'Custom').slice(0, 18), url: custom.url },
+    custom: {
+      label: String(custom.label || 'Custom').slice(0, 18),
+      inputLabel: String(custom.label || '').slice(0, 18),
+      url: custom.url,
+      configured: isHttpUrl(custom.url),
+    },
     mail: { label: provider.label, url: provider.url },
   };
 }
@@ -119,16 +129,18 @@ function cleanHttpUrl(value) {
 // Changing this string would orphan every session the user has already signed in.
 const AI_PARTITION = 'persist:sidenote-ai';
 
-const DEFAULT_DATA = { version: 1, items: [], links: [] };
+const DEFAULT_DATA = { version: 3, items: [], links: [] };
 
 let win = null;
 let tray = null;
 let dock = null;
 let ask = null;
+let capture = null;
 let settingsStore = null;
 let dataStore = null;
 let quitting = false;
 let relayoutTimer = null;
+let reminderTimer = null;
 
 const settings = {
   get: () => settingsStore.get(),
@@ -145,10 +157,13 @@ function createWindow() {
   settingsStore.set({ collapsed: startCollapsed });
 
   win = new BrowserWindow({
-    width: COLLAPSED_W,
-    height: COLLAPSED_H,
-    minWidth: COLLAPSED_W,
-    minHeight: COLLAPSED_H,
+    // Placeholder only — Dock sets the real rect before the window is shown.
+    width: COLLAPSED_MIN,
+    height: COLLAPSED_MIN,
+    // Docked to the top the collapsed tab lies on its side, so the window gets
+    // shorter than it is wide — both minimums have to allow the smaller value.
+    minWidth: COLLAPSED_MIN,
+    minHeight: COLLAPSED_MIN,
     show: false,
     frame: false,
     transparent: true,
@@ -168,7 +183,10 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: false,
+      // Let Chromium pause animation frames and aggressively throttle timers
+      // when the widget is not visible. Time-critical reminders are scheduled
+      // in the main process instead of depending on this renderer.
+      backgroundThrottling: true,
       spellcheck: false,
       webviewTag: true, // the ChatGPT / Claude panes
     },
@@ -186,7 +204,8 @@ function createWindow() {
 
   win.once('ready-to-show', () => {
     dock.layout({ animate: false });
-    win.show();
+    // Tray-only + collapsed means there is nothing to put on screen at all.
+    if (!(startCollapsed && dock.trayOnly)) win.show();
     if (!startCollapsed) win.focus();
     pushTheme();
 
@@ -239,7 +258,8 @@ function chromeUserAgent() {
 }
 
 function setupAiSession() {
-  session.fromPartition(AI_PARTITION).setUserAgent(chromeUserAgent());
+  const aiSession = session.fromPartition(AI_PARTITION, { cache: true });
+  aiSession.setUserAgent(chromeUserAgent());
 }
 
 /**
@@ -314,7 +334,7 @@ function appModeBrowsers() {
 
 function popOutSite(key) {
   const site = paneSites()[key];
-  if (!site) return false;
+  if (!site || !isHttpUrl(site.url)) return false;
 
   const exe = appModeBrowsers()[0];
   if (exe) {
@@ -333,6 +353,44 @@ function applyAlwaysOnTop() {
   if (!win) return;
   const on = settings.get().alwaysOnTop !== false;
   win.setAlwaysOnTop(on, on ? 'floating' : 'normal');
+}
+
+/**
+ * Persist one item captured from the floating bar.
+ *
+ * The panel renderer holds the whole document in memory and saves it wholesale,
+ * so writing here and letting it find out later would mean its next save
+ * silently dropped this item. Instead the new item is pushed straight into the
+ * store *and* handed to the renderer, which appends it to its own copy — both
+ * sides stay in step without a reload, and no in-flight edit is disturbed.
+ */
+function addCapturedItem({ kind, title, at }) {
+  const name = String(title || '').trim().slice(0, 400);
+  if (!name) return { ok: false, error: 'Nothing to save.' };
+
+  // `Number(null)` is 0, which is a perfectly finite timestamp — the epoch —
+  // so an undated capture would file itself as 54 years overdue. Reject the
+  // empty cases before coercing.
+  const when = at == null || at === '' ? null : Number(at);
+  const item = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    kind: kind === 'event' ? 'event' : 'task',
+    title: name,
+    at: when !== null && Number.isFinite(when) && when > 0 ? when : null,
+    done: false,
+    archived: false,
+    createdAt: Date.now(),
+  };
+
+  const data = dataStore.get();
+  const items = Array.isArray(data.items) ? data.items : [];
+  dataStore.replace({ ...data, items: [...items, item] });
+  dataStore.flush(); // the bar is transient; don't leave this only in memory
+
+  if (win && !win.isDestroyed()) win.webContents.send('data:added', item);
+  scheduleNextReminder();
+
+  return { ok: true, item };
 }
 
 function expandAndFocus() {
@@ -418,11 +476,25 @@ function notifyRenderer() {
 function refreshTrayMenu() {
   if (!tray) return;
   const s = settings.get();
+  const dockTo = (edge) => ({
+    label: `${edge[0].toUpperCase()}${edge.slice(1)} edge`,
+    type: 'radio',
+    checked: s.edge === edge,
+    click: () => {
+      dock.setEdge(edge);
+      notifyRenderer();
+      refreshTrayMenu();
+    },
+  });
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
         label: s.collapsed ? 'Show panel' : 'Hide panel',
         click: () => (s.collapsed ? expandAndFocus() : dock.setCollapsed(true)),
+      },
+      {
+        label: 'Quick capture…\tAlt+Shift+C',
+        click: () => capture.show(),
       },
       {
         label: 'Ask about this screen…\tAlt+Shift+A',
@@ -438,20 +510,18 @@ function refreshTrayMenu() {
       },
       {
         label: 'Dock to',
-        submenu: [
-          {
-            label: 'Left edge',
-            type: 'radio',
-            checked: s.edge === 'left',
-            click: () => dock.setEdge('left'),
-          },
-          {
-            label: 'Right edge',
-            type: 'radio',
-            checked: s.edge === 'right',
-            click: () => dock.setEdge('right'),
-          },
-        ],
+        submenu: [dockTo('left'), dockTo('right'), dockTo('top')],
+      },
+      {
+        label: 'Hide to tray when collapsed',
+        type: 'checkbox',
+        checked: s.trayOnly === true,
+        click: (item) => {
+          settingsStore.set({ trayOnly: item.checked });
+          dock.syncTrayOnly();
+          notifyRenderer();
+          refreshTrayMenu();
+        },
       },
       { type: 'separator' },
       {
@@ -508,6 +578,7 @@ function registerShortcuts() {
     refreshTrayMenu();
   });
   bind('Alt+Shift+A', () => ask.toggle());
+  bind('Alt+Shift+C', () => capture.toggle());
 }
 
 function watchDisplays() {
@@ -526,6 +597,105 @@ function watchDisplays() {
 }
 
 // ---------------------------------------------------------------------------
+// Reminder scheduling
+// ---------------------------------------------------------------------------
+
+const MINUTE_MS = 60_000;
+const MAX_TIMER_MS = 2_147_000_000;
+
+function reminderLeadMinutes() {
+  const value = Number(settings.get().reminderLeadMinutes);
+  return [10, 15, 30].includes(value) ? value : 15;
+}
+
+function showNotification(payload) {
+  if (!settings.get().reminders || !Notification.isSupported()) return;
+  const notification = new Notification({
+    title: payload?.title || 'Sidenote',
+    body: payload?.body || '',
+    silent: false,
+    icon: iconPath('icon.png'),
+  });
+  notification.on('click', () => expandAndFocus());
+  notification.show();
+}
+
+/**
+ * Reminders use one main-process timeout aimed at the next due item. This keeps
+ * them accurate while allowing the renderer to sleep instead of waking every
+ * 20 seconds for a complete list rebuild.
+ */
+function scheduleNextReminder() {
+  clearTimeout(reminderTimer);
+  reminderTimer = null;
+  if (!dataStore || !settingsStore || !settings.get().reminders) return;
+
+  const now = Date.now();
+  const leadMs = reminderLeadMinutes() * MINUTE_MS;
+  let nextAt = Infinity;
+
+  for (const item of dataStore.get()?.items || []) {
+    if (
+      (item.kind !== 'event' && item.kind !== 'task') ||
+      item.archived ||
+      item.done ||
+      item.notified ||
+      !Number.isFinite(item.at) ||
+      now - item.at >= 10 * MINUTE_MS
+    )
+      continue;
+    nextAt = Math.min(nextAt, Math.max(now, item.at - leadMs));
+  }
+
+  if (!Number.isFinite(nextAt)) return;
+  const delay = Math.min(MAX_TIMER_MS, Math.max(0, nextAt - now));
+  reminderTimer = setTimeout(fireDueReminders, delay);
+}
+
+function fireDueReminders() {
+  reminderTimer = null;
+  if (!dataStore || !settings.get().reminders) return;
+
+  const now = Date.now();
+  const leadMs = reminderLeadMinutes() * MINUTE_MS;
+  const current = dataStore.get();
+  let changed = false;
+  const fired = [];
+  const items = (current?.items || []).map((item) => {
+    if (
+      (item.kind !== 'event' && item.kind !== 'task') ||
+      item.archived ||
+      item.done ||
+      item.notified ||
+      !Number.isFinite(item.at) ||
+      now < item.at - leadMs ||
+      now - item.at >= 10 * MINUTE_MS
+    )
+      return item;
+
+    const minutesUntil = item.at > now ? Math.max(1, Math.ceil((item.at - now) / MINUTE_MS)) : 0;
+    const payload = {
+      title: minutesUntil
+        ? `${item.kind === 'event' ? 'Starting' : 'Due'} in ${minutesUntil} minute${minutesUntil === 1 ? '' : 's'}`
+        : item.kind === 'event'
+          ? 'Starting now'
+          : 'Due now',
+      body: item.title,
+    };
+    showNotification(payload);
+    fired.push({ id: item.id, notifiedAt: now });
+    changed = true;
+    return { ...item, notified: true, notifiedAt: now };
+  });
+
+  if (changed) {
+    dataStore.replace({ ...current, items });
+    if (win && !win.isDestroyed()) win.webContents.send('reminders:fired', fired);
+  }
+  scheduleNextReminder();
+}
+
+// ---------------------------------------------------------------------------
 // IPC
 // ---------------------------------------------------------------------------
 
@@ -533,6 +703,7 @@ function registerIpc() {
   ipcMain.handle('data:load', () => dataStore.get());
   ipcMain.handle('data:save', (_e, data) => {
     if (data && typeof data === 'object') dataStore.replace(data);
+    scheduleNextReminder();
     return true;
   });
 
@@ -550,6 +721,9 @@ function registerIpc() {
     if ('alwaysOnTop' in patch) applyAlwaysOnTop();
     if ('startWithWindows' in patch) applyLoginItem(patch.startWithWindows);
     if ('edge' in patch && patch.edge !== before.edge) dock.layout({ animate: true });
+    if ('trayOnly' in patch && !!patch.trayOnly !== !!before.trayOnly) dock.syncTrayOnly();
+    if ('tabSize' in patch && patch.tabSize !== before.tabSize) dock.layout({ animate: true });
+    if ('reminders' in patch || 'reminderLeadMinutes' in patch) scheduleNextReminder();
     notifyRenderer();
     refreshTrayMenu();
     return { ...next, startWithWindows: loginItemEnabled() };
@@ -579,6 +753,17 @@ function registerIpc() {
   });
 
   ipcMain.handle('tools:list', () => currentTools());
+
+  ipcMain.handle('web:preconnect', (_e, rawUrl) => {
+    try {
+      const url = new URL(String(rawUrl || ''));
+      if (!/^https?:$/.test(url.protocol) || !paneOrigins().has(url.origin)) return false;
+      session.fromPartition(AI_PARTITION).preconnect({ url: url.origin, numSockets: 1 });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  });
 
   /** An empty or invalid URL clears the override and restores the default. */
   ipcMain.handle('tools:setUrl', (_e, id, url) => {
@@ -665,6 +850,10 @@ function registerIpc() {
   ipcMain.handle('ai:setCustom', (_e, payload) => {
     const label = String(payload?.label || '').trim().slice(0, 18);
     let url = String(payload?.url || '').trim();
+    if (!url) {
+      settingsStore.set({ paneCustom: { label: '', url: '' } });
+      return { ok: true, sites: paneSites() };
+    }
     if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
     if (!isHttpUrl(url)) return { ok: false, error: 'That is not a valid web address.' };
 
@@ -687,16 +876,7 @@ function registerIpc() {
   ipcMain.on('app:quit', () => quit());
 
   ipcMain.on('notify', (_e, payload) => {
-    if (!settings.get().reminders) return;
-    if (!Notification.isSupported()) return;
-    const n = new Notification({
-      title: payload?.title || 'Sidenote',
-      body: payload?.body || '',
-      silent: false,
-      icon: iconPath('icon.png'),
-    });
-    n.on('click', () => expandAndFocus());
-    n.show();
+    showNotification(payload);
   });
 }
 
@@ -708,6 +888,7 @@ function quit() {
   quitting = true;
   try {
     ask?.destroy();
+    capture?.destroy();
     dataStore?.flush();
     settingsStore?.flush();
   } catch (_) {
@@ -729,6 +910,13 @@ if (!gotLock) {
     settingsStore = new Store(path.join(userData, 'settings.json'), DEFAULT_SETTINGS);
     dataStore = new Store(path.join(userData, 'data.json'), DEFAULT_DATA);
 
+    // Earlier versions silently filled the custom slot with Gmail. Clear that
+    // exact legacy placeholder without touching a genuinely customized address.
+    const custom = settingsStore.get().paneCustom;
+    if (custom?.label === 'Gmail' && custom?.url === 'https://mail.google.com/mail/u/0/') {
+      settingsStore.set({ paneCustom: { label: '', url: '' } });
+    }
+
     if (!settingsStore.get().displayId) {
       settingsStore.set({ displayId: String(screen.getPrimaryDisplay().id) });
     }
@@ -745,6 +933,7 @@ if (!gotLock) {
     });
 
     registerIpc();
+    scheduleNextReminder();
     createWindow();
 
     ask = new Ask({
@@ -756,12 +945,18 @@ if (!gotLock) {
     });
     ask.registerIpc();
 
+    capture = new Capture({ root: ROOT, settings, onAdd: addCapturedItem });
+    capture.registerIpc();
+
     buildTray();
     registerShortcuts();
     watchDisplays();
 
-    // Keep the OS registration in sync with what the UI shows.
-    applyLoginItem(settingsStore.get().startWithWindows);
+    // Keep the OS registration in sync with what the UI shows. The opt-out is
+    // only used by the isolated performance smoke test in development.
+    if (process.env.SIDENOTE_PERF_TEST !== '1') {
+      applyLoginItem(settingsStore.get().startWithWindows);
+    }
 
     nativeTheme.on('updated', () => pushTheme());
 
@@ -776,6 +971,7 @@ if (!gotLock) {
 
   app.on('before-quit', () => {
     quitting = true;
+    clearTimeout(reminderTimer);
     dataStore?.flush();
     settingsStore?.flush();
   });

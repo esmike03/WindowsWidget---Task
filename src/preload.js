@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('sidenote', {
   data: {
     load: () => ipcRenderer.invoke('data:load'),
     save: (data) => ipcRenderer.invoke('data:save', data),
+    // An item saved from the floating quick-capture bar, so the panel's
+    // in-memory copy stays in step and its next save doesn't drop it.
+    onAdded: (fn) => on('data:added', fn),
   },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
@@ -42,6 +45,12 @@ contextBridge.exposeInMainWorld('sidenote', {
     update: (id, payload) => ipcRenderer.invoke('tools:update', id, payload),
     remove: (id) => ipcRenderer.invoke('tools:remove', id),
     favorite: (id, favorite) => ipcRenderer.invoke('tools:favorite', id, favorite),
+  },
+  web: {
+    preconnect: (url) => ipcRenderer.invoke('web:preconnect', url),
+  },
+  reminders: {
+    onFired: (fn) => on('reminders:fired', fn),
   },
   // The panel only summons the Ask bar; the automation itself runs in the
   // offscreen host window (see askhost.js), so the panel is never disturbed.

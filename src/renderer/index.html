@@ -38,6 +38,9 @@
     <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
     <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M15.6 8.4a3.9 3.9 0 0 1-4.9 4.9L5.6 18.4a1.9 1.9 0 0 1-2.7-2.7l5.1-5.1a3.9 3.9 0 0 1 4.9-4.9l-2.4 2.4 2.1 2.1 2.4-2.4a3.9 3.9 0 0 1 .6.6z"/></symbol>
     <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z"/></symbol>
+    <symbol id="i-note" viewBox="0 0 24 24"><path d="M5 3.5h10.5L19 7v13.5H5z"/><path d="M15.5 3.5V7H19M8.5 11h7M8.5 14.5h7M8.5 18h4"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.2-4 2.8 2.5 2.2-2.1 3.8 3.6"/></symbol>
+    <symbol id="i-highlight" viewBox="0 0 24 24"><path d="m8 4 8 8-5.5 5.5-8-8zM14 18h7M6.5 13.5 3 17l4 4 3.5-3.5"/></symbol>
   </defs>
 </svg>
 
@@ -77,6 +80,7 @@
     <span class="seg-thumb" aria-hidden="true"></span>
     <button class="seg-btn is-on" role="tab" data-view="schedule">Schedule<em id="cSchedule">0</em></button>
     <button class="seg-btn" role="tab" data-view="notes">Notes<em id="cNotes">0</em></button>
+    <button class="seg-btn" role="tab" data-view="tasks">Tasks<em id="cTasks">0</em></button>
     <button class="seg-btn" role="tab" data-view="links">Links<em id="cLinks">0</em></button>
   </nav>
 
@@ -104,6 +108,76 @@
     </form>
     <div id="hint" class="hint">Try “standup tomorrow 9:30am”</div>
   </footer>
+
+  <!-- full note editor -->
+  <section id="noteEditor" class="note-editor" aria-label="Note editor" hidden>
+    <header class="note-editor-head">
+      <button class="ico" type="button" data-note-act="cancel" title="Close note"><svg><use href="#i-back"/></svg></button>
+      <div class="note-editor-label">
+        <strong id="noteEditorHeading">New note</strong>
+        <span>Rich note</span>
+      </div>
+      <button class="btn btn-primary note-save" type="button" data-note-act="save">Save</button>
+    </header>
+
+    <div class="note-editor-scroll">
+      <input id="noteTitle" class="note-title-input" type="text" maxlength="240"
+             placeholder="Note title" spellcheck="true" />
+
+      <div class="note-toolbar" role="toolbar" aria-label="Note formatting">
+        <button type="button" data-note-act="undo" title="Undo (Ctrl+Z)">
+          <svg><use href="#i-undo"/></svg>
+        </button>
+        <button class="note-bold" type="button" data-note-cmd="bold" title="Bold (Ctrl+B)">B</button>
+        <label class="note-font" title="Font size">
+          <span class="sr-only">Font size</span>
+          <select id="noteFontSize">
+            <option value="2">Small</option>
+            <option value="3" selected>Body</option>
+            <option value="4">Large</option>
+            <option value="5">Title</option>
+          </select>
+        </label>
+        <div class="note-highlight-wrap">
+          <button type="button" data-note-act="highlight" title="Highlight">
+            <svg><use href="#i-highlight"/></svg>
+          </button>
+          <div id="noteHighlightMenu" class="note-highlight-menu" hidden>
+            <button type="button" data-highlight="yellow" title="Yellow highlight"></button>
+            <button type="button" data-highlight="mint" title="Mint highlight"></button>
+            <button type="button" data-highlight="blue" title="Blue highlight"></button>
+            <button type="button" data-highlight="pink" title="Pink highlight"></button>
+          </div>
+        </div>
+        <button type="button" data-note-act="checklist" title="Add checklist item">
+          <svg><use href="#i-check"/></svg>
+        </button>
+        <button type="button" data-note-act="image" title="Add or drop an image">
+          <svg><use href="#i-image"/></svg>
+        </button>
+      </div>
+
+      <div id="noteDropzone" class="note-paper">
+        <div id="noteContent" class="note-content" contenteditable="true"
+             data-placeholder="Write your note..." spellcheck="true"></div>
+        <div class="note-drop-hint"><svg><use href="#i-image"/></svg> Drop an image anywhere in the note</div>
+      </div>
+
+      <section class="note-checklist" aria-label="Checklist">
+        <div class="note-checklist-head">
+          <span>Checklist</span>
+          <button type="button" data-note-act="checklist">+ Add item</button>
+        </div>
+        <div id="noteChecklist"></div>
+      </section>
+    </div>
+
+    <div class="note-editor-foot">
+      <span id="noteStatus">Changes are saved when you press Save</span>
+      <button class="btn btn-ghost" type="button" data-note-act="cancel">Cancel</button>
+    </div>
+    <input id="noteImageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden />
+  </section>
 
   <!-- date / time popover -->
   <div id="when" class="pop" hidden>
@@ -139,11 +213,11 @@
         <span class="ai-thumb" aria-hidden="true"></span>
         <button class="is-on" data-ai="chatgpt">ChatGPT</button>
         <button data-ai="claude">Claude</button>
-        <button data-ai="custom">Gmail</button>
+        <button data-ai="custom">Custom</button>
         <button data-ai="mail">Outlook</button>
       </div>
       <div class="ai-toolbar" id="aiToolbar" hidden>
-        <button class="ico" data-act="toolBack" title="Back to chats"><svg><use href="#i-back"/></svg></button>
+        <button class="ico" data-act="toolBack" title="Back to tools"><svg><use href="#i-back"/></svg></button>
         <span class="ai-tool-name" id="aiToolName"></span>
       </div>
       <button class="ico ico-ask" data-act="aiAsk" title="Open Ask bar (Alt+Shift+A)"><svg><use href="#i-spark"/></svg></button>
@@ -171,15 +245,15 @@
   <div id="sheet" class="sheet" hidden>
     <header class="sheet-head">
       <div class="sheet-seg">
-        <button class="is-on" data-sheet="archive">Archive</button>
+        <button data-sheet="archive">Archive</button>
         <button data-sheet="tools">Tools</button>
-        <button data-sheet="settings">Settings</button>
+        <button class="is-on" data-sheet="settings">Settings</button>
       </div>
       <button class="ico" data-act="sheetClose" title="Close"><svg><use href="#i-x"/></svg></button>
     </header>
 
     <div class="sheet-body">
-      <section data-pane="archive">
+      <section data-pane="archive" hidden>
         <div id="archiveList"></div>
         <div class="sheet-actions">
           <button class="btn btn-ghost" data-act="clearArchive">Clear archive</button>
@@ -187,13 +261,8 @@
       </section>
 
       <section data-pane="tools" hidden>
-        <div class="tool-top">
-          <div class="tool-search">
-            <svg><use href="#i-search"/></svg>
-            <input id="toolSearch" type="text" placeholder="Search tools…" spellcheck="false" maxlength="60" />
-          </div>
-          <button class="tool-add-btn" id="toolAddButton" type="button" title="Add a custom tool"><svg><use href="#i-plus"/></svg></button>
-        </div>
+        <div id="toolList"></div>
+        <p class="tool-foot">Star favourites to pin them above the catalogue. Add your own web tools with <svg><use href="#i-plus"/></svg>.</p>
         <div class="tool-add" id="toolAdd" hidden>
           <div class="tool-add-head">Add a tool</div>
           <input id="toolAddName" type="text" placeholder="Tool name" maxlength="40" spellcheck="false" />
@@ -207,11 +276,16 @@
             </div>
           </div>
         </div>
-        <div id="toolList"></div>
-        <p class="tool-foot">Star favourites to pin them above the catalogue. Add your own web tools with <svg><use href="#i-plus"/></svg>.</p>
+        <div class="tool-top">
+          <div class="tool-search">
+            <svg><use href="#i-search"/></svg>
+            <input id="toolSearch" type="text" placeholder="Search tools…" spellcheck="false" maxlength="60" />
+          </div>
+          <button class="tool-add-btn" id="toolAddButton" type="button" title="Add a custom tool"><svg><use href="#i-plus"/></svg></button>
+        </div>
       </section>
 
-      <section data-pane="settings" hidden>
+      <section data-pane="settings">
         <div class="set-group">
           <div class="set-label">Appearance</div>
           <div class="set-row">
@@ -227,6 +301,15 @@
             <div class="pick" data-pick="edge">
               <button data-value="left">Left</button>
               <button data-value="right">Right</button>
+              <button data-value="top">Top</button>
+            </div>
+          </div>
+          <div class="set-row">
+            <span>Collapsed tab</span>
+            <div class="pick" data-pick="tabSize">
+              <button data-value="small">Small</button>
+              <button data-value="medium">Medium</button>
+              <button data-value="large">Large</button>
             </div>
           </div>
         </div>
@@ -243,7 +326,16 @@
           <label class="set-row set-toggle"><span>Start with Windows</span><input type="checkbox" data-toggle="startWithWindows" /><i></i></label>
           <label class="set-row set-toggle"><span>Always on top</span><input type="checkbox" data-toggle="alwaysOnTop" /><i></i></label>
           <label class="set-row set-toggle"><span>Collapse when unfocused</span><input type="checkbox" data-toggle="autoCollapse" /><i></i></label>
-          <label class="set-row set-toggle"><span>Event reminders</span><input type="checkbox" data-toggle="reminders" /><i></i></label>
+          <label class="set-row set-toggle" title="Collapse hides the window completely — reopen from the tray icon or Alt+Shift+N."><span>Hide to tray when collapsed</span><input type="checkbox" data-toggle="trayOnly" /><i></i></label>
+          <label class="set-row set-toggle"><span>Event &amp; task reminders</span><input type="checkbox" data-toggle="reminders" /><i></i></label>
+          <div class="set-row reminder-lead">
+            <span>Notify early</span>
+            <div class="pick" data-pick="reminderLeadMinutes">
+              <button data-value="10">10 min</button>
+              <button data-value="15">15 min</button>
+              <button data-value="30">30 min</button>
+            </div>
+          </div>
           <label class="set-row set-toggle" title="When enabled, each Ask prompt includes a full screenshot of the display containing the Ask bar."><span>Include screen capture in Ask</span><input type="checkbox" data-toggle="askIncludeScreenshot" /><i></i></label>
         </div>
 
@@ -278,7 +370,7 @@
         </div>
 
         <div class="set-foot">
-          <span>Sidenote 1.3.0 · Alt+Shift+N</span>
+          <span>Sidenote 1.5.0 · Alt+Shift+N</span>
           <button class="btn btn-ghost btn-danger" data-act="quit">Quit</button>
         </div>
       </section>
@@ -291,6 +383,7 @@
   </div>
 </section>
 
+<script src="parse.js"></script>
 <script src="inject.js"></script>
 <script src="app.js"></script>
 </body>
