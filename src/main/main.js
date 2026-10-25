@@ -22,6 +22,7 @@ const { Store } = require('./store');
 const { Dock, COLLAPSED_MIN, DEFAULT_TAB_SIZE } = require('./dock');
 const { Ask } = require('./ask');
 const { Capture } = require('./capture');
+const { Backdrop } = require('./backdrop');
 const { resolveTools, resolveToolUrl, toolOrigins, isHttpUrl } = require('./tools');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -49,6 +50,14 @@ const DEFAULT_SETTINGS = {
   paneMail: 'outlook', // id from MAIL_PROVIDERS
   askTarget: 'chatgpt', // which site the floating Ask bar drives
   askIncludeScreenshot: false, // opt-in: attach a full-screen capture to Ask prompts
+  askFolder: null, // folder ChatGPT (Codex) works in; null = the user's home folder
+  askVoiceAutoSend: true, // send dictated prompts once the user stops talking
+  askManage: true, // ChatGPT may add and change Sidenote items
+  askAccess: 'read', // read = look only | edit = may also change files in askFolder
+  codexPath: null, // optional override when Codex isn't on PATH
+  codexModel: null, // optional Codex model override
+  blurEffect: true, // blurred wallpaper behind the panel
+  hardwareAcceleration: false, // GPU rendering roughly doubles memory use for this small window
   askBounds: null, // remembered position of the Ask bar
   captureBounds: null, // remembered position of the quick-capture bar
   toolUrls: {}, // per-tool URL overrides, keyed by tool id
@@ -131,6 +140,19 @@ const AI_PARTITION = 'persist:sidenote-ai';
 
 const DEFAULT_DATA = { version: 3, items: [], links: [] };
 
+// GPU compositing costs ~110 MB for a window that only draws text and a few
+// gradients, so Sidenote renders in software unless the user opts back in.
+// This has to be decided before `ready`, so read the setting directly.
+function earlySetting(key) {
+  try {
+    const file = path.join(app.getPath('userData'), 'settings.json');
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''))[key];
+  } catch (_) {
+    return undefined;
+  }
+}
+if (earlySetting('hardwareAcceleration') !== true) app.disableHardwareAcceleration();
+
 let win = null;
 let tray = null;
 let dock = null;
@@ -141,6 +163,9 @@ let dataStore = null;
 let quitting = false;
 let relayoutTimer = null;
 let reminderTimer = null;
+let backdrop = null;
+let backdropDisplayId = null;
+let backdropMoveTimer = null;
 
 const settings = {
   get: () => settingsStore.get(),
@@ -208,6 +233,7 @@ function createWindow() {
     if (!(startCollapsed && dock.trayOnly)) win.show();
     if (!startCollapsed) win.focus();
     pushTheme();
+    pushBackdrop();
 
     if (process.env.SIDENOTE_DEBUG) {
       const d = dock.display();
@@ -221,6 +247,9 @@ function createWindow() {
       console.log('[renderer]', e && e.message ? e.message : message);
     });
   }
+
+  win.on('move', onWindowMoved);
+  win.on('resize', onWindowMoved);
 
   win.on('close', (e) => {
     if (!quitting) {
@@ -395,9 +424,46 @@ function addCapturedItem({ kind, title, at }) {
 
 function expandAndFocus() {
   if (!win) return;
+  pushBackdrop(); // cheap when cached; picks up a wallpaper change
   dock.setCollapsed(false);
   win.show();
   win.focus();
+}
+
+// ---------------------------------------------------------------------------
+// Blur effect
+// ---------------------------------------------------------------------------
+
+/** Sends the blurred wallpaper for the panel's display, or null when off. */
+async function pushBackdrop() {
+  if (!win || win.isDestroyed()) return;
+  if (settings.get().blurEffect === false) {
+    backdropDisplayId = null;
+    win.webContents.send('backdrop:changed', null);
+    return;
+  }
+  const display = dock.display();
+  backdropDisplayId = display.id;
+  let payload = null;
+  try {
+    payload = await backdrop.forDisplay(display);
+  } catch (err) {
+    console.error('[sidenote] backdrop failed', err);
+  }
+  if (win && !win.isDestroyed()) win.webContents.send('backdrop:changed', payload);
+}
+
+/** The window moved: realign the image, or rebuild it on a new display. */
+function onWindowMoved() {
+  if (settings.get().blurEffect === false || !win || win.isDestroyed()) return;
+  clearTimeout(backdropMoveTimer);
+  backdropMoveTimer = setTimeout(() => {
+    if (!win || win.isDestroyed()) return;
+    const b = win.getBounds();
+    const here = screen.getDisplayNearestPoint({ x: b.x + Math.round(b.width / 2), y: b.y + Math.round(b.height / 2) });
+    if (here.id !== backdropDisplayId) pushBackdrop();
+    else win.webContents.send('backdrop:moved');
+  }, 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -501,6 +567,10 @@ function refreshTrayMenu() {
         click: () => ask.show(),
       },
       {
+        label: 'Voice command…\tAlt+Shift+V',
+        click: () => ask.startVoice(),
+      },
+      {
         label: 'Move to next screen',
         enabled: screen.getAllDisplays().length > 1,
         click: () => {
@@ -579,6 +649,7 @@ function registerShortcuts() {
   });
   bind('Alt+Shift+A', () => ask.toggle());
   bind('Alt+Shift+C', () => capture.toggle());
+  bind('Alt+Shift+V', () => ask.startVoice());
 }
 
 function watchDisplays() {
@@ -589,6 +660,7 @@ function watchDisplays() {
       // If the stored monitor is gone, Dock falls back to the primary display.
       dock.layout({ animate: false });
       refreshTrayMenu();
+      pushBackdrop(); // resolution or monitor changes alter the crop
     }, 350);
   };
   screen.on('display-added', relayout);
@@ -724,6 +796,14 @@ function registerIpc() {
     if ('trayOnly' in patch && !!patch.trayOnly !== !!before.trayOnly) dock.syncTrayOnly();
     if ('tabSize' in patch && patch.tabSize !== before.tabSize) dock.layout({ animate: true });
     if ('reminders' in patch || 'reminderLeadMinutes' in patch) scheduleNextReminder();
+    if ('askAccess' in patch || 'askFolder' in patch) ask?.codex.newChat();
+    if ('blurEffect' in patch) pushBackdrop();
+    if ('hardwareAcceleration' in patch && !!patch.hardwareAcceleration !== !!before.hardwareAcceleration) {
+      // Only takes effect at startup, so restart straight away.
+      settingsStore.flush();
+      app.relaunch();
+      setTimeout(() => quit(), 50);
+    }
     notifyRenderer();
     refreshTrayMenu();
     return { ...next, startWithWindows: loginItemEnabled() };
@@ -927,6 +1007,7 @@ if (!gotLock) {
     const legacyTab = { gmail: 'custom', outlook: 'mail' }[settingsStore.get().aiTab];
     if (legacyTab) settingsStore.set({ aiTab: legacyTab });
 
+    backdrop = new Backdrop();
     setupAiSession();
     app.on('web-contents-created', (_e, contents) => {
       if (contents.getType() === 'webview') handleAiPopups(contents);
@@ -942,6 +1023,18 @@ if (!gotLock) {
       mainWindow: () => win,
       harden: hardenWebviews,
       sites: paneSites,
+      stateDir: userData,
+      // ChatGPT's changes go through the store and are mirrored to the panel,
+      // the same way quick-capture items are.
+      data: {
+        get: () => dataStore.get(),
+        set: (next) => {
+          dataStore.replace(next);
+          dataStore.flush();
+          if (win && !win.isDestroyed()) win.webContents.send('data:replaced', next);
+          scheduleNextReminder();
+        },
+      },
     });
     ask.registerIpc();
 

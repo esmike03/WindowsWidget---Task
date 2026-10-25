@@ -67,7 +67,7 @@
       <div class="d-sub" id="hSub">—</div>
     </div>
     <div class="head-actions">
-      <button class="ico ico-ai" data-act="ai" title="ChatGPT, Claude, Gmail &amp; Outlook"><svg><use href="#i-apps"/></svg></button>
+      <button class="ico ico-ai" data-act="ai" title="Web pane — ChatGPT, Claude, custom &amp; mail"><svg><use href="#i-apps"/></svg></button>
       <button class="ico" data-act="screen" title="Move to next screen (Alt+Shift+M)"><svg><use href="#i-monitor"/></svg></button>
       <button class="ico ico-tools" data-act="tools" title="Tools — background remover, PDF, converters…"><svg><use href="#i-wrench"/></svg></button>
       <button class="ico" data-act="theme" title="Toggle theme"><svg class="ico-sun"><use href="#i-sun"/></svg><svg class="ico-moon"><use href="#i-moon"/></svg></button>
@@ -262,7 +262,7 @@
 
       <section data-pane="tools" hidden>
         <div id="toolList"></div>
-        <p class="tool-foot">Star favourites to pin them above the catalogue. Add your own web tools with <svg><use href="#i-plus"/></svg>.</p>
+        <p class="tool-foot">Star a tool to pin it to Favorites. Use + to add your own.</p>
         <div class="tool-add" id="toolAdd" hidden>
           <div class="tool-add-head">Add a tool</div>
           <input id="toolAddName" type="text" placeholder="Tool name" maxlength="40" spellcheck="false" />
@@ -296,6 +296,7 @@
               <button data-value="dark">Dark</button>
             </div>
           </div>
+          <label class="set-row set-toggle" title="Shows a blurred copy of your wallpaper behind the panel, lined up with where it sits on screen."><span>Blur effect</span><input type="checkbox" data-toggle="blurEffect" /><i></i></label>
           <div class="set-row">
             <span>Dock edge</span>
             <div class="pick" data-pick="edge">
@@ -336,7 +337,35 @@
               <button data-value="30">30 min</button>
             </div>
           </div>
-          <label class="set-row set-toggle" title="When enabled, each Ask prompt includes a full screenshot of the display containing the Ask bar."><span>Include screen capture in Ask</span><input type="checkbox" data-toggle="askIncludeScreenshot" /><i></i></label>
+        </div>
+
+        <div class="set-group">
+          <div class="set-label">Ask bar · ChatGPT</div>
+          <div class="set-sub" id="codexStatus">Checking ChatGPT connection…</div>
+          <div class="set-row">
+            <span>Account</span>
+            <button class="btn btn-ghost" type="button" data-act="codexSign" id="codexSign" hidden>Sign in</button>
+          </div>
+          <label class="set-row set-toggle" title="ChatGPT can add, reschedule, complete and remove your events, tasks, notes and links. Every change can be undone from the Ask bar."><span>Manage notes &amp; schedule</span><input type="checkbox" data-toggle="askManage" /><i></i></label>
+          <div class="set-row">
+            <span>Folder</span>
+            <button class="btn btn-ghost set-path" type="button" data-act="codexFolder" id="codexFolder" title="Choose the folder ChatGPT can read">Home</button>
+          </div>
+          <div class="set-row">
+            <span>File access</span>
+            <div class="pick" data-pick="askAccess">
+              <button data-value="read">Read only</button>
+              <button data-value="edit">Can edit</button>
+            </div>
+          </div>
+          <label class="set-row set-toggle" title="After you stop talking (about 2 seconds), a dictated prompt is sent without pressing Enter. Start dictating with the mic button or Alt+Shift+V."><span>Send voice commands automatically</span><input type="checkbox" data-toggle="askVoiceAutoSend" /><i></i></label>
+          <label class="set-row set-toggle" title="When enabled, each Ask prompt includes a full screenshot of the display containing the Ask bar."><span>Include screen capture</span><input type="checkbox" data-toggle="askIncludeScreenshot" /><i></i></label>
+        </div>
+
+        <div class="set-group">
+          <div class="set-label">Performance</div>
+          <label class="set-row set-toggle"><span>Hardware acceleration</span><input type="checkbox" data-toggle="hardwareAcceleration" /><i></i></label>
+          <div class="set-sub">Off uses about half the memory. Turn on only if the web pane feels slow. Changing this restarts Sidenote.</div>
         </div>
 
         <div class="set-group">
@@ -370,7 +399,7 @@
         </div>
 
         <div class="set-foot">
-          <span>Sidenote 1.5.0 · Alt+Shift+N</span>
+          <span>Sidenote 1.6.0 · Alt+Shift+N</span>
           <button class="btn btn-ghost btn-danger" data-act="quit">Quit</button>
         </div>
       </section>

@@ -1,4 +1,4 @@
-# Sidenote 1.5.0
+# Sidenote 1.6.0
 
 A small, always-available Windows desktop widget for **notes, tasks and scheduling**.
 It docks flush against the left, right, or top edge of your screen and collapses
@@ -36,6 +36,12 @@ widget to start with Windows reliably — see [Starting with Windows](#starting-
 **Schedule** — events and meetings with a date and time. Grouped into
 `Overdue / Today / Tomorrow / <weekday> / <date>`. The soonest upcoming item is marked
 with a thin gradient rail on its edge.
+
+**Calendar** — switch Schedule between **List** and **Month**. The month grid marks
+days that have events (purple dot) or dated tasks (green dot); red means something
+on that day is overdue. Click a day to see its items underneath. While a day is
+selected, new events land on it: `lunch 1pm` goes on that day at 13:00, and an
+entry with no time gets 9:00. Typing an explicit date (`friday 10am`) still wins.
 
 **Notes** — rich notes with a title, formatted text, colored highlights, checklists,
 and embedded images. Paste or drop images into the editor, or use its image button.
@@ -89,7 +95,39 @@ previous tenant.
 
 The ✦ button in the pane header opens the **Ask bar** — a floating, draggable field
 that sends your prompt to ChatGPT or Claude and shows the complete reply in a
-scrollable chat bubble with a copy button. The bubble automatically opens above
+scrollable chat bubble with a copy button.
+
+**ChatGPT in the Ask bar runs through [Codex](https://github.com/openai/codex)**,
+OpenAI's local agent, signed in with your ChatGPT account so it uses your
+subscription. It doesn't type into the chatgpt.com page. Codex can open,
+search and read files on this PC by itself, so you can ask things like *"which
+file in here mentions the budget?"*. Follow-up questions continue the same
+conversation until you press **+** (new chat).
+
+- Install once: `npm i -g @openai/codex`, then **Settings → Ask bar · ChatGPT →
+  Sign in** (finishes in your browser).
+- **Folder**: where ChatGPT starts working (your home folder by default).
+- **File access**: *Read only* (default) lets it read files and run read-only
+  commands. *Can edit* also lets it change files inside that folder.
+- **Stop** (■ or `Esc`) ends a running answer.
+
+**ChatGPT manages Sidenote.** Ask it things like *"remind me to call the bank
+friday 10am"*, *"take this note: …"*, *"move the dentist to next Tuesday"*,
+*"what's on my schedule tomorrow?"* or *"mark the invoice task done"*. Each
+question sends ChatGPT a short list of your events, tasks, notes and links plus
+the current time. It answers with a list of changes, and Sidenote applies them
+itself. ChatGPT never edits `data.json` directly. The changes are listed under
+the reply with an **Undo** button. Completed or removed items go to the Archive.
+Turn this off in **Settings → Ask bar · ChatGPT → Manage notes & schedule**.
+
+**Voice commands.** Press `Alt+Shift+V` (or the mic in the Ask bar, or tray →
+*Voice command…*) and speak. Sidenote focuses the Ask bar and starts Windows
+voice typing (Win+H). About two seconds after you stop talking the prompt is
+sent. Switch off **Send voice commands automatically** to review the text first.
+The first time, Windows asks you to accept its online speech service. Voice
+typing needs an internet connection.
+
+Claude still answers through its web page in a hidden window. The bubble automatically opens above
 or below the compact input bar, whichever keeps it on-screen. Screen capture is
 **off by default**; enable
 Settings → *Include screen capture in Ask* to attach a full screenshot to each prompt.
@@ -210,6 +248,7 @@ Renaming a link (✎) also accepts a `#tag` to re-file it.
 | `Alt+Shift+M` | Move to the next monitor (global) |
 | `Alt+Shift+A` | Ask about this screen — floating bar (global) |
 | `Alt+Shift+C` | Quick-capture bar (global) |
+| `Alt+Shift+V` | Voice command — Ask bar with dictation (global) |
 | `Ctrl+1` / `Ctrl+2` / `Ctrl+3` / `Ctrl+4` | Schedule / Notes / Tasks / Links |
 | `Ctrl+S` / `Ctrl+Z` / `Ctrl+B` | Save / undo / bold in the note editor |
 | `/` | Jump to the composer |
@@ -245,21 +284,31 @@ rather than being overwritten.
 
 ---
 
-## A note on the glass
+## Memory use
 
-Windows will not blur the desktop behind a *transparent* Electron window, so the
-frosted look here comes from near-opaque layered gradients, a lit top rim, a fine
-grain texture and real blur between in-app layers. The panel is deliberately kept at
-~96–99% opacity: any more transparency and whatever is behind it ghosts through the
-text.
+Sidenote renders without the GPU by default. For a small window of text and
+gradients, GPU compositing roughly doubled memory use (≈225 MB → ≈110 MB private
+memory at idle) without a visible difference. If the web pane feels slow, turn on
+**Settings → Performance → Hardware acceleration** (Sidenote restarts to apply).
 
-If you are on Windows 11 and want genuine desktop blur instead, add
-`backgroundMaterial: 'acrylic'` to the `BrowserWindow` options in
-`src/main/main.js` and set `transparent: false`. You will trade away the rounded
-corners and the drop shadow, since acrylic fills the whole window rectangle — you'll
-also want `GUTTER = 0` in `src/main/dock.js`.
+Asking ChatGPT no longer loads chatgpt.com in a hidden browser, which was the
+largest memory cost of the Ask bar.
 
----
+## Blur effect
+
+**Settings → Appearance → Blur effect** (on by default) puts a blurred copy of
+your desktop wallpaper behind the panel, lined up with where the panel sits on
+screen. This is how Windows 11's own Mica material works. It follows wallpaper
+changes, monitor moves and the dock position.
+
+It is not a live blur of the windows behind the panel, the way TranslucentTB
+blurs the taskbar. Windows only offers that to app windows through acrylic or
+blur-behind. Both fall back to a flat grey box whenever the window isn't
+focused, and on some PCs all the time. The wallpaper version works everywhere,
+including in low-memory mode.
+
+Turn it off for the solid frosted panel: near-opaque gradients, a lit top rim
+and a fine grain texture.
 
 ## Layout
 
@@ -268,6 +317,10 @@ src/main/main.js     app lifecycle, window, tray, IPC, shortcuts, reminders, aut
 src/main/dock.js     edge geometry, collapse animation, drag-to-snap, monitors
 src/main/store.js    atomic JSON persistence
 src/main/ask.js      floating Ask bar and idle host lifecycle
+src/main/backdrop.js blurred-wallpaper blur effect
+src/main/assistant.js ChatGPT ↔ Sidenote: context snapshot, actions, undo
+src/main/voice.js    Windows voice typing trigger (Win+H via koffi)
+src/main/codex.js    ChatGPT through the Codex CLI (sign-in, folder, access, follow-ups)
 src/main/capture.js  floating quick-capture window and persistence bridge
 src/preload.js       contextBridge API surface
 src/capture-preload.js quick-capture contextBridge API

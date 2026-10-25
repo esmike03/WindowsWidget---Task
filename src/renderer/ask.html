@@ -16,6 +16,9 @@
     <symbol id="a-spark" viewBox="0 0 24 24"><path d="M12 3.5l1.9 4.9 4.9 1.9-4.9 1.9L12 17.1l-1.9-4.9-4.9-1.9 4.9-1.9z"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></symbol>
     <symbol id="a-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
     <symbol id="a-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 5.5h-9a2.5 2.5 0 0 0-2.5 2.5v9"/></symbol>
+    <symbol id="a-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></symbol>
+    <symbol id="a-new" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="a-mic" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/></symbol>
     <symbol id="a-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/></symbol>
   </defs>
 </svg>
@@ -33,8 +36,14 @@
 
     <input id="prompt" type="text" placeholder="Ask ChatGPT or Claude…" spellcheck="false" maxlength="2000" />
 
+    <button class="ico ico-mic" id="mic" type="button" title="Speak (Alt+Shift+V)">
+      <svg><use href="#a-mic"/></svg>
+    </button>
     <button class="ico ico-send" id="send" type="button" title="Send prompt (Enter)">
       <svg><use href="#a-send"/></svg>
+    </button>
+    <button class="ico ico-stop" id="stop" type="button" title="Stop (Esc)" hidden>
+      <svg><use href="#a-stop"/></svg>
     </button>
     <button class="ico" id="close" type="button" title="Hide (Esc)"><svg><use href="#a-x"/></svg></button>
   </div>
@@ -46,11 +55,16 @@
       <svg class="out-icon" id="outIcon" hidden><use href="#a-spark"/></svg>
       <span id="status">Working…</span>
       <div class="out-acts">
+        <button class="ico" id="newChat" type="button" title="New chat — forget this conversation" hidden><svg><use href="#a-new"/></svg></button>
         <button class="ico" id="copy" type="button" title="Copy answer" hidden><svg><use href="#a-copy"/></svg></button>
         <button class="ico" id="clear" type="button" title="Dismiss"><svg><use href="#a-x"/></svg></button>
       </div>
     </header>
     <div id="answer" class="answer"></div>
+    <div id="outFoot" class="out-foot" hidden>
+      <ul id="outChanges" class="out-changes"></ul>
+      <button class="out-btn" id="outAction" type="button"></button>
+    </div>
   </section>
 </main>
 
